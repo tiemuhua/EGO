@@ -44,11 +44,7 @@ namespace ego_planner {
             return oneSeg;
         }
 
-        constexpr int MAX_TRAJS = 8;
-        constexpr int VARIS = 2;
-        int seg_upbound = std::min((int) segments.size(), static_cast<int>(floor(log(MAX_TRAJS) / log(VARIS))));
-        std::vector<ControlPoints> control_pts_buf;
-        control_pts_buf.reserve(MAX_TRAJS);
+        int seg_upbound = std::min((int) segments.size(), 3);
         const double RESOLUTION = grid_map_->getResolution();
         const double CTRL_PT_DIST = (cps_.points.col(0) - cps_.points.col(cps_.size - 1)).norm() / (cps_.size - 1);
 
@@ -96,24 +92,9 @@ namespace ego_planner {
             return oneSeg;
         }
 
-        std::vector<int> selection(seg_upbound);
-        std::fill(selection.begin(), selection.end(), 0);
-        selection[0] = -1; // init
-        int max_traj_nums = static_cast<int>(pow(VARIS, seg_upbound));
-        for (int i = 0; i < max_traj_nums; i++) {
-            // 2.1 Calculate the selection table.
-            int digit_id = 0;
-            selection[digit_id]++;
-            while (digit_id < seg_upbound && selection[digit_id] >= VARIS) {
-                selection[digit_id] = 0;
-                digit_id++;
-                if (digit_id >= seg_upbound) {
-                    ROS_ERROR("Should not happen!!! digit_id=%d, seg_upbound=%d", digit_id, seg_upbound);
-                }
-                selection[digit_id]++;
-            }
-
-            // 2.2 Assign params according to the selection table.
+        std::vector<ControlPoints> control_pts_buf;
+        int max_traj_nums = (1 << seg_upbound);
+        for (int traj_id = 0; traj_id < max_traj_nums; ++traj_id) {
             ControlPoints cpsOneSample;
             cpsOneSample.resize(cps_.size);
             cpsOneSample.clearance = cps_.clearance;
@@ -124,46 +105,39 @@ namespace ego_planner {
                     cpsOneSample.base_point[cp_id] = cps_.base_point[cp_id];
                     cpsOneSample.direction[cp_id] = cps_.direction[cp_id];
                 } else if (cp_id >= segments[seg_id].first && cp_id <= segments[seg_id].second) {
-                    if (!selection[seg_id]) {
+                    if (!((traj_id >> seg_id) & 1)) {
                         cpsOneSample.points.col(cp_id) = RichInfoSegs[seg_id].first.points.col(cp_of_seg_id);
                         cpsOneSample.base_point[cp_id] = RichInfoSegs[seg_id].first.base_point[cp_of_seg_id];
                         cpsOneSample.direction[cp_id] = RichInfoSegs[seg_id].first.direction[cp_of_seg_id];
-                        cp_of_seg_id++;
+                    } else if (RichInfoSegs[seg_id].second.size) {
+                        cpsOneSample.points.col(cp_id) = RichInfoSegs[seg_id].second.points.col(cp_of_seg_id);
+                        cpsOneSample.base_point[cp_id] = RichInfoSegs[seg_id].second.base_point[cp_of_seg_id];
+                        cpsOneSample.direction[cp_id] = RichInfoSegs[seg_id].second.direction[cp_of_seg_id];
                     } else {
-                        if (RichInfoSegs[seg_id].second.size) {
-                            cpsOneSample.points.col(cp_id) = RichInfoSegs[seg_id].second.points.col(cp_of_seg_id);
-                            cpsOneSample.base_point[cp_id] = RichInfoSegs[seg_id].second.base_point[cp_of_seg_id];
-                            cpsOneSample.direction[cp_id] = RichInfoSegs[seg_id].second.direction[cp_of_seg_id];
-                            cp_of_seg_id++;
-                        } else {
-                            // Abandon this trajectory.
-                            goto abandon_this_trajectory;
-                        }
+                        goto abandon_this_trajectory;
                     }
+                    cp_of_seg_id++;
 
                     if (cp_id == segments[seg_id].second) {
                         cp_of_seg_id = 0;
                         seg_id++;
                     }
                 } else {
-                    ROS_ERROR(
-                            "Shold not happen!!!!, cp_id=%d, seg_id=%d, segments.front().first=%d, segments.back().second=%d, segments[seg_id].first=%d, segments[seg_id].second=%d",
-                            cp_id, seg_id, segments.front().first, segments.back().second, segments[seg_id].first,
-                            segments[seg_id].second);
+                    ROS_ERROR("Shold not happen!!!!, cp_id=%d, seg_id=%d, segments.front().first=%d, "
+                              "segments.back().second=%d, segments[seg_id].first=%d, segments[seg_id].second=%d",
+                              cp_id, seg_id, segments.front().first, segments.back().second, segments[seg_id].first,
+                              segments[seg_id].second);
                 }
-
                 cp_id++;
             }
 
             control_pts_buf.emplace_back(cpsOneSample);
-
             abandon_this_trajectory:;
         }
-
         return control_pts_buf;
     } // namespace ego_planner
 
-    bool BsplineOptimizer::func2(const double RESOLUTION, const double CTRL_PT_DIST, ControlPoints &cps1,
+    bool BsplineOptimizer::func2(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &cps1,
                                  ControlPoints &cps2) {
         Eigen::Vector3d base_vec_reverse = -cps1.direction[0][0];
         Eigen::Vector3d base_pt_reverse = cps1.points.col(0) +
@@ -175,7 +149,6 @@ namespace ego_planner {
             double l = RESOLUTION;
             for (; l <= l_upbound; l += RESOLUTION) {
                 Eigen::Vector3d base_pt_temp = base_pt_reverse + l * base_vec_reverse;
-                //cout << base_pt_temp.transpose() << endl;
                 if (!grid_map_->getInflateOccupancy(base_pt_temp)) {
                     cps2.base_point[0][0] = base_pt_temp;
                     cps2.direction[0][0] = base_vec_reverse;
@@ -197,9 +170,8 @@ namespace ego_planner {
         return true;
     }
 
-    bool BsplineOptimizer::func1(const double RESOLUTION, const double CTRL_PT_DIST, ControlPoints &cps1,
-                                 ControlPoints &cps2,
-                                 bool &error) {
+     bool BsplineOptimizer::func1(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &cps1,
+                                 ControlPoints &cps2, bool &error) {
         error = false;
         int occ_start_id = -1, occ_end_id = -1;
         Eigen::Vector3d occ_start_pt, occ_end_pt;
@@ -239,7 +211,9 @@ namespace ego_planner {
             return false;
         }
 
-        // 1.2 Reverse the vector and find new base points from occ_start_id to occ_end_id.
+        /*******************************************************************************
+         * Reverse the vector and find new base points from occ_start_id to occ_end_id *
+         *******************************************************************************/
         for (int j = occ_start_id; j <= occ_end_id; j++) {
             Eigen::Vector3d base_pt_reverse, base_vec_reverse;
             if (cps1.base_point[j].size() != 1) {
@@ -288,7 +262,9 @@ namespace ego_planner {
             }
         }
 
-        // 1.3 Assign the base points to control points within [0, occ_start_id) and (occ_end_id, RichInfoSegs[i].first.size()-1].
+        /*****************************************************************************************************
+         * Assign the base points to control points within [0, occ_start_id) and (occ_end_id, cps1.size()-1] *
+         *****************************************************************************************************/
         if (cps2.size) {
             for (int j = occ_start_id - 1; j >= 0; j--) {
                 cps2.base_point[j][0] = cps2.base_point[occ_start_id][0];
@@ -303,7 +279,8 @@ namespace ego_planner {
     }
 
 
-    /* This function is very similar to check_collision_and_rebound().
+    /**
+     * This function is very similar to check_collision_and_rebound().
      * It was written separately, just because I did it once and it has been running stably since March 2020.
      * But I will merge then someday.*/
     std::vector<std::pair<int, int>>

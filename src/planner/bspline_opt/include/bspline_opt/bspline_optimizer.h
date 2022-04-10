@@ -199,8 +199,8 @@ namespace ego_planner {
 
         void combineCostRefine(const double *x, double *grad, double &f_combine, int n);
 
-        bool func1(const double RESOLUTION, const double CTRL_PT_DIST, ControlPoints &cps1, ControlPoints &cps2, bool &error);
-        bool func2(const double RESOLUTION, const double CTRL_PT_DIST, ControlPoints &cps1, ControlPoints &cps2);
+        bool func1(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &cps1, ControlPoints &cps2, bool &error);
+        bool func2(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &cps1, ControlPoints &cps2);
 
             /* for benckmark evaluation only */
     public:
