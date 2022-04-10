@@ -170,7 +170,7 @@ namespace ego_planner {
         return true;
     }
 
-     bool BsplineOptimizer::func1(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &cps1,
+    bool BsplineOptimizer::func1(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &cps1,
                                  ControlPoints &cps2, bool &error) {
         error = false;
         int occ_start_id = -1, occ_end_id = -1;
@@ -342,19 +342,6 @@ namespace ego_planner {
             return blank_ret;
         }
 
-        /*** a star search ***/
-        vector<vector<Eigen::Vector3d>> a_star_pathes;
-        for (auto &segment_id: segment_ids) {
-            Eigen::Vector3d in(init_points.col(segment_id.first)), out(init_points.col(segment_id.second));
-            if (a_star_->AstarSearch(/*(in-out).norm()/10+0.05*/ 0.1, in, out)) {
-                a_star_pathes.push_back(a_star_->getPath());
-            } else {
-                ROS_ERROR("a star error, force return!");
-                vector<std::pair<int, int>> blank_ret;
-                return blank_ret;
-            }
-        }
-
         /*** calculate bounds ***/
         Eigen::Index id_low_bound, id_up_bound;
         vector<std::pair<int, int>> bounds(segment_ids.size());
@@ -375,28 +362,11 @@ namespace ego_planner {
         }
 
         /*** Adjust segment length ***/
-        vector<std::pair<int, int>> adjusted_segment_ids(segment_ids.size());
-        constexpr double MINIMUM_PERCENT = 0.0; // Each segment is guaranteed to have sufficient points to generate sufficient force
-        int minimum_points = round(init_points.cols() * MINIMUM_PERCENT), num_points;
-        for (size_t i = 0; i < segment_ids.size(); i++) {
-            /*** Adjust segment length ***/
-            num_points = segment_ids[i].second - segment_ids[i].first + 1;
-            if (num_points < minimum_points) {
-                double add_points_each_side = ((float) (minimum_points - num_points) + 1.0f) / 2;
-                adjusted_segment_ids[i].first = (int) fmax(segment_ids[i].first - add_points_each_side,
-                                                           bounds[i].first);
-                adjusted_segment_ids[i].second = (int) fmin(segment_ids[i].second + add_points_each_side,
-                                                            bounds[i].second);
-            } else {
-                adjusted_segment_ids[i].first = segment_ids[i].first;
-                adjusted_segment_ids[i].second = segment_ids[i].second;
-            }
-        }
-        for (size_t i = 1; i < adjusted_segment_ids.size(); i++) { // Avoid overlap
-            if (adjusted_segment_ids[i - 1].second >= adjusted_segment_ids[i].first) {
-                double middle = (double) (adjusted_segment_ids[i - 1].second + adjusted_segment_ids[i].first) / 2.0;
-                adjusted_segment_ids[i - 1].second = static_cast<int>(middle - 0.1);
-                adjusted_segment_ids[i].first = static_cast<int>(middle + 1.1);
+        for (size_t i = 1; i < segment_ids.size(); i++) { // Avoid overlap
+            if (segment_ids[i - 1].second >= segment_ids[i].first) {
+                double middle = (double) (segment_ids[i - 1].second + segment_ids[i].first) / 2.0;
+                segment_ids[i - 1].second = static_cast<int>(middle - 0.1);
+                segment_ids[i].first = static_cast<int>(middle + 1.1);
             }
         }
 
@@ -405,134 +375,21 @@ namespace ego_planner {
 
         /*** Assign data to each segment ***/
         for (size_t i = 0; i < segment_ids.size(); i++) {
-            // step 1
-            for (int j = adjusted_segment_ids[i].first; j <= adjusted_segment_ids[i].second; ++j)
-                cps_.flag_temp[j] = false;
-
-            // step 2
-            int got_intersection_id = -1;
-            for (int j = segment_ids[i].first + 1; j < segment_ids[i].second; ++j) {
-                Eigen::Vector3d ctrl_pts_law(init_points.col(j + 1) - init_points.col(j - 1)), intersection_point;
-                // Let "Astar_id = id_of_the_most_far_away_Astar_point" will be better, but it needs more computation
-                int Astar_id = a_star_pathes[i].size() / 2, last_Astar_id;
-                double val = (a_star_pathes[i][Astar_id] - init_points.col(j)).dot(ctrl_pts_law), last_val = val;
-                while (Astar_id >= 0 && Astar_id < (int) a_star_pathes[i].size()) {
-                    last_Astar_id = Astar_id;
-
-                    if (val >= 0)
-                        --Astar_id;
-                    else
-                        ++Astar_id;
-
-                    val = (a_star_pathes[i][Astar_id] - init_points.col(j)).dot(ctrl_pts_law);
-
-                    if (val * last_val <= 0 &&
-                        (abs(val) > 0 || abs(last_val) > 0)) {// val = last_val = 0.0 is not allowed
-                        intersection_point =
-                                a_star_pathes[i][Astar_id] +
-                                ((a_star_pathes[i][Astar_id] - a_star_pathes[i][last_Astar_id]) *
-                                 (ctrl_pts_law.dot(init_points.col(j) - a_star_pathes[i][Astar_id]) /
-                                  ctrl_pts_law.dot(a_star_pathes[i][Astar_id] - a_star_pathes[i][last_Astar_id])) // = t
-                                );
-                        got_intersection_id = j;
-                        break;
-                    }
-                }
-
-                if (got_intersection_id >= 0) {
-                    double length = (intersection_point - init_points.col(j)).norm();
-                    if (length > 1e-5) {
-                        cps_.flag_temp[j] = true;
-                        for (double a = length; a >= 0.0; a -= grid_map_->getResolution()) {
-                            occ = grid_map_->getInflateOccupancy(
-                                    (a / length) * intersection_point + (1 - a / length) * init_points.col(j));
-
-                            if (occ || a < grid_map_->getResolution()) {
-                                if (occ)
-                                    a += grid_map_->getResolution();
-                                cps_.base_point[j].emplace_back(
-                                        (a / length) * intersection_point + (1 - a / length) * init_points.col(j));
-                                cps_.direction[j].emplace_back((intersection_point - init_points.col(j)).normalized());
-                                break;
-                            }
-                        }
-                    } else {
-                        got_intersection_id = -1;
-                    }
-                }
+            bool a_star_success, base_point_success;
+            getBasePointAndDirectionForSegment(segment_ids[i].first, segment_ids[i].second, cps_, a_star_success, base_point_success);
+            if (!a_star_success) {
+                return {};
             }
-
-            /** Corner case: the segment length is too short.
-             * Here the control points may outside the A* path,
-             * leading to opposite gradient direction.
-             * So I have to take special care of it */
-            if (segment_ids[i].second - segment_ids[i].first == 1) {
-                Eigen::Vector3d ctrl_pts_law(init_points.col(segment_ids[i].second) -
-                                             init_points.col(segment_ids[i].first)), intersection_point;
-                Eigen::Vector3d middle_point =
-                        (init_points.col(segment_ids[i].second) + init_points.col(segment_ids[i].first)) / 2;
-                // Let "Astar_id = id_of_the_most_far_away_Astar_point" will be better, but it needs more computation
-                int Astar_id = a_star_pathes[i].size() / 2, last_Astar_id;
-                double val = (a_star_pathes[i][Astar_id] - middle_point).dot(ctrl_pts_law), last_val = val;
-                while (Astar_id >= 0 && Astar_id < (int) a_star_pathes[i].size()) {
-                    last_Astar_id = Astar_id;
-
-                    if (val >= 0)
-                        --Astar_id;
-                    else
-                        ++Astar_id;
-
-                    val = (a_star_pathes[i][Astar_id] - middle_point).dot(ctrl_pts_law);
-
-                    if (val * last_val <= 0 && (abs(val) > 0 || abs(last_val) > 0)) {
-                        // val = last_val = 0.0 is not allowed
-                        intersection_point =
-                                a_star_pathes[i][Astar_id] +
-                                ((a_star_pathes[i][Astar_id] - a_star_pathes[i][last_Astar_id]) *
-                                 (ctrl_pts_law.dot(middle_point - a_star_pathes[i][Astar_id]) /
-                                  ctrl_pts_law.dot(a_star_pathes[i][Astar_id] - a_star_pathes[i][last_Astar_id])) // = t
-                                );
-
-                        if ((intersection_point - middle_point).norm() > 0.01) {// 1cm.
-                            cps_.flag_temp[segment_ids[i].first] = true;
-                            cps_.base_point[segment_ids[i].first].push_back(init_points.col(segment_ids[i].first));
-                            cps_.direction[segment_ids[i].first].push_back(
-                                    (intersection_point - middle_point).normalized());
-
-                            got_intersection_id = segment_ids[i].first;
-                        }
-                        break;
-                    }
-                }
-            }
-
-            //step 3
-            if (got_intersection_id >= 0) {
-                for (int j = got_intersection_id + 1; j <= adjusted_segment_ids[i].second; ++j)
-                    if (!cps_.flag_temp[j]) {
-                        cps_.base_point[j].push_back(cps_.base_point[j - 1].back());
-                        cps_.direction[j].push_back(cps_.direction[j - 1].back());
-                        // cout << "AAA " << j << endl;
-                    }
-
-                for (int j = got_intersection_id - 1; j >= adjusted_segment_ids[i].first; --j)
-                    if (!cps_.flag_temp[j]) {
-                        cps_.base_point[j].push_back(cps_.base_point[j + 1].back());
-                        cps_.direction[j].push_back(cps_.direction[j + 1].back());
-                    }
-                final_segment_ids.push_back(adjusted_segment_ids[i]);
-            } else {
-                // Just ignore, it does not matter ^_^.
-                // ROS_ERROR("Failed to generate direction! segment_id=%d", i);
+            if (base_point_success) {
+                final_segment_ids.emplace_back(segment_ids[i]);
             }
         }
 
         return final_segment_ids;
     }
 
-    int
-    BsplineOptimizer::earlyExit(void *func_data, const double *x, const double *g, const double fx, const double xnorm,
-                                const double gnorm, const double step, int n, int k, int ls) {
+    int BsplineOptimizer::earlyExit(void *func_data, const double *x, const double *g, const double fx,
+                                    const double xnorm, const double gnorm, const double step, int n, int k, int ls) {
         auto *opt = reinterpret_cast<BsplineOptimizer *>(func_data);
         return (opt->force_stop_type_ == STOP_FOR_ERROR || opt->force_stop_type_ == STOP_FOR_REBOUND);
     }
@@ -637,7 +494,7 @@ namespace ego_planner {
         }
     }
 
-    void BsplineOptimizer::calcFitnessCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient) {
+    void BsplineOptimizer::calcFitnessCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient) const {
 
         cost = 0.0;
 
@@ -766,27 +623,144 @@ namespace ego_planner {
         }
     }
 
-    bool BsplineOptimizer::check_collision_and_rebound() {
+    void BsplineOptimizer::getBasePointAndDirectionForSegment(const int start_id, const int end_id,
+                                                              ControlPoints &cps, bool &a_star_success, bool &base_point_success) {
+        for (int j = start_id; j <= end_id; ++j)
+            cps.flag_temp[j] = false;
+        vector<Eigen::Vector3d> a_star_path;
+        if (a_star_->AstarSearch(0.1, cps.points.col(start_id), cps.points.col(end_id))) {
+            a_star_path = a_star_->getPath();
+            a_star_success = true;
+        } else {
+            a_star_success = false;
+            return;
+        }
 
+        // step 2
+        int got_intersection_id = -1;
+        for (int j = start_id + 1; j < end_id; ++j) {
+            Eigen::Vector3d ctrl_pts_law(cps.points.col(j + 1) - cps.points.col(j - 1)), intersection_point;
+            // Let "Astar_id = id_of_the_most_far_away_Astar_point" will be better, but it needs more computation
+            int Astar_id = a_star_path.size() / 2, last_Astar_id;
+            double val = (a_star_path[Astar_id] - cps.points.col(j)).dot(ctrl_pts_law), last_val = val;
+            while (Astar_id >= 0 && Astar_id < (int) a_star_path.size()) {
+                last_Astar_id = Astar_id;
+                last_val = val;
+
+                if (val >= 0)
+                    --Astar_id;
+                else
+                    ++Astar_id;
+
+                val = (a_star_path[Astar_id] - cps.points.col(j)).dot(ctrl_pts_law);
+
+                if (val * last_val <= 0 && (abs(val) > 0 || abs(last_val) > 0)) {// val = last_val = 0.0 is not allowed
+                    double ratio = ctrl_pts_law.dot(a_star_path[Astar_id] - cps.points.col(j)) /
+                                   ctrl_pts_law.dot(a_star_path[Astar_id] - a_star_path[last_Astar_id]);
+                    intersection_point =
+                            (1 - ratio) * a_star_path[Astar_id] + ratio * a_star_path[last_Astar_id];
+                    got_intersection_id = j;
+                    break;
+                }
+            }
+
+            if (got_intersection_id >= 0) {
+                double length = (intersection_point - cps.points.col(j)).norm();
+                if (length > 1e-5) {
+                    cps.flag_temp[j] = true;
+                    for (double a = length; a >= 0.0; a -= grid_map_->getResolution()) {
+                        Eigen::Vector3d line_point = (a / length) * intersection_point + (1 - a / length) * cps.points.col(j);
+                        bool occ = grid_map_->getInflateOccupancy(line_point);
+
+                        if (occ || a < grid_map_->getResolution()) {
+                            if (occ) { a += grid_map_->getResolution(); }
+                            cps.base_point[j].emplace_back(line_point);
+                            cps.direction[j].emplace_back((intersection_point - cps.points.col(j)).normalized());
+                            break;
+                        }
+                    }
+                } else {
+                    got_intersection_id = -1;
+                }
+            }
+        }
+
+        /**
+         * Corner case: the segment length is too short,
+         * the control points may outside the A* path,
+         * leading to opposite gradient direction.
+         * So I have to take special care of it */
+        if (end_id - start_id == 1) {
+            Eigen::Vector3d ctrl_pts_law(cps.points.col(end_id) - cps.points.col(start_id)), intersection_point;
+            Eigen::Vector3d middle_point = (cps.points.col(end_id) + cps.points.col(start_id)) / 2;
+            // Let "Astar_id = id_of_the_most_far_away_Astar_point" will be better, but it needs more computation
+            int Astar_id = a_star_path.size() / 2, last_Astar_id;
+            double val = (a_star_path[Astar_id] - middle_point).dot(ctrl_pts_law), last_val = val;
+            while (Astar_id >= 0 && Astar_id < (int) a_star_path.size()) {
+                last_Astar_id = Astar_id;
+                last_val = val;
+
+                if (val >= 0)
+                    --Astar_id;
+                else
+                    ++Astar_id;
+
+                val = (a_star_path[Astar_id] - middle_point).dot(ctrl_pts_law);
+
+                if (val * last_val <= 0 && (abs(val) > 0 || abs(last_val) > 0)) {
+                    // val = last_val = 0.0 is not allowed
+                    double ratio = ctrl_pts_law.dot(a_star_path[Astar_id] - middle_point) /
+                                   ctrl_pts_law.dot(a_star_path[Astar_id] - a_star_path[last_Astar_id]);
+                    intersection_point = (1 - ratio) * a_star_path[Astar_id] + ratio * a_star_path[last_Astar_id];
+
+                    if ((intersection_point - middle_point).norm() > 0.01) {// 1cm.
+                        cps.flag_temp[start_id] = true;
+                        cps.base_point[start_id].push_back(cps.points.col(start_id));
+                        cps.direction[start_id].push_back(
+                                (intersection_point - middle_point).normalized());
+
+                        got_intersection_id = start_id;
+                    }
+                    break;
+                }
+            }
+        }
+
+        //step 3
+        if (got_intersection_id >= 0) {
+            for (int j = got_intersection_id + 1; j <= end_id; ++j)
+                if (!cps.flag_temp[j]) {
+                    cps.base_point[j].emplace_back(cps.base_point[j - 1].back());
+                    cps.direction[j].emplace_back(cps.direction[j - 1].back());
+                }
+
+            for (int j = got_intersection_id - 1; j >= start_id; --j)
+                if (!cps.flag_temp[j]) {
+                    cps.base_point[j].emplace_back(cps.base_point[j + 1].back());
+                    cps.direction[j].emplace_back(cps.direction[j + 1].back());
+                }
+            base_point_success = true;
+        } else {
+            base_point_success = false;
+        }
+    }
+
+
+    bool BsplineOptimizer::check_collision_and_rebound() {
         int end_idx = cps_.size - order_;
 
         /*** Check and segment the initial trajectory according to obstacles ***/
-        int in_id, out_id;
         vector<std::pair<int, int>> segment_ids;
         bool flag_new_obs_valid = false;
         int i_end = end_idx - (end_idx - order_) / 3;
         for (int i = order_ - 1; i <= i_end; ++i) {
-
             bool occ = grid_map_->getInflateOccupancy(cps_.points.col(i));
-
             /*** check if the new collision will be valid ***/
             if (occ) {
                 for (size_t k = 0; k < cps_.direction[i].size(); ++k) {
-                    cout.precision(2);
-                    if ((cps_.points.col(i) - cps_.base_point[i][k]).dot(cps_.direction[i][k]) <
-                        1 * grid_map_->getResolution()) // current point is outside all the collision_points.
-                    {
-                        occ = false; // Not really takes effect, just for better hunman understanding.
+                    if ((cps_.points.col(i) - cps_.base_point[i][k]).dot(cps_.direction[i][k]) < grid_map_->getResolution()) {
+                        // current point is outside all the collision_points.
+                        occ = false; // Not really takes effect, just for better human understanding.
                         break;
                     }
                 }
@@ -794,147 +768,54 @@ namespace ego_planner {
 
             if (occ) {
                 flag_new_obs_valid = true;
-
-                int j;
-                for (j = i - 1; j >= 0; --j) {
-                    occ = grid_map_->getInflateOccupancy(cps_.points.col(j));
-                    if (!occ) {
-                        in_id = j;
-                        break;
-                    }
+                int in_id = -1;
+                for (in_id = i - 1; in_id >= 0; --in_id) {
+                    occ = grid_map_->getInflateOccupancy(cps_.points.col(in_id));
+                    if (!occ) { break; }
                 }
-                if (j < 0) {// fail to get the obs free point
+                if (in_id < 0) {// fail to get the obs free point
                     ROS_ERROR("ERROR! the drone is in obstacle. This should not happen.");
                     in_id = 0;
                 }
 
-                for (j = i + 1; j < cps_.size; ++j) {
-                    occ = grid_map_->getInflateOccupancy(cps_.points.col(j));
-
-                    if (!occ) {
-                        out_id = j;
-                        break;
-                    }
+                int out_id = -1;
+                for (out_id = i + 1; out_id < cps_.size; ++out_id) {
+                    occ = grid_map_->getInflateOccupancy(cps_.points.col(out_id));
+                    if (!occ) { break; }
                 }
-                if (j >= cps_.size) {// fail to get the obs free point
+                if (out_id >= cps_.size) {// fail to get the obs free point
                     ROS_WARN("WARN! terminal point of the current trajectory is in obstacle, skip this planning.");
-
                     force_stop_type_ = STOP_FOR_ERROR;
                     return false;
                 }
 
-                i = j + 1;
-
+                i = out_id + 1;
                 segment_ids.emplace_back(in_id, out_id);
             }
         }
 
-        if (flag_new_obs_valid) {
-            vector<vector<Eigen::Vector3d>> a_star_pathes;
-            for (size_t i = 0; i < segment_ids.size(); ++i) {
-                /*** a star search ***/
-                Eigen::Vector3d in(cps_.points.col(segment_ids[i].first)), out(cps_.points.col(segment_ids[i].second));
-                if (a_star_->AstarSearch(/*(in-out).norm()/10+0.05*/ 0.1, in, out)) {
-                    a_star_pathes.push_back(a_star_->getPath());
-                } else {
-                    ROS_ERROR("a star error");
-                    segment_ids.erase(segment_ids.begin() + i);
-                    i--;
-                }
+        if (!flag_new_obs_valid) { return false; }
+
+        for (size_t i = 1; i < segment_ids.size(); i++) { // Avoid overlap
+            if (segment_ids[i - 1].second >= segment_ids[i].first) {
+                double middle = (double) (segment_ids[i - 1].second + segment_ids[i].first) / 2.0;
+                segment_ids[i - 1].second = static_cast<int>(middle - 0.1);
+                segment_ids[i].first = static_cast<int>(middle + 1.1);
             }
-
-            for (size_t i = 1; i < segment_ids.size(); i++) // Avoid overlap
-            {
-                if (segment_ids[i - 1].second >= segment_ids[i].first) {
-                    double middle = (double) (segment_ids[i - 1].second + segment_ids[i].first) / 2.0;
-                    segment_ids[i - 1].second = static_cast<int>(middle - 0.1);
-                    segment_ids[i].first = static_cast<int>(middle + 1.1);
-                }
-            }
-
-            /*** Assign parameters to each segment ***/
-            for (size_t i = 0; i < segment_ids.size(); ++i) {
-                // step 1
-                for (int j = segment_ids[i].first; j <= segment_ids[i].second; ++j)
-                    cps_.flag_temp[j] = false;
-
-                // step 2
-                int got_intersection_id = -1;
-                for (int j = segment_ids[i].first + 1; j < segment_ids[i].second; ++j) {
-                    Eigen::Vector3d ctrl_pts_law(cps_.points.col(j + 1) - cps_.points.col(j - 1)), intersection_point;
-                    // Let "Astar_id = id_of_the_most_far_away_Astar_point" will be better, but it needs more computation
-                    int Astar_id = a_star_pathes[i].size() / 2, last_Astar_id;
-                    double val = (a_star_pathes[i][Astar_id] - cps_.points.col(j)).dot(ctrl_pts_law), last_val = val;
-                    while (Astar_id >= 0 && Astar_id < (int) a_star_pathes[i].size()) {
-                        last_Astar_id = Astar_id;
-
-                        if (val >= 0)
-                            --Astar_id;
-                        else
-                            ++Astar_id;
-
-                        val = (a_star_pathes[i][Astar_id] - cps_.points.col(j)).dot(ctrl_pts_law);
-
-                        if (val * last_val <= 0 &&
-                            (abs(val) > 0 || abs(last_val) > 0)) {// val = last_val = 0.0 is not allowed
-                            intersection_point =
-                                    a_star_pathes[i][Astar_id] +
-                                    ((a_star_pathes[i][Astar_id] - a_star_pathes[i][last_Astar_id]) *
-                                     (ctrl_pts_law.dot(cps_.points.col(j) - a_star_pathes[i][Astar_id]) /
-                                      ctrl_pts_law.dot(
-                                              a_star_pathes[i][Astar_id] - a_star_pathes[i][last_Astar_id])) // = t
-                                    );
-
-                            got_intersection_id = j;
-                            break;
-                        }
-                    }
-
-                    if (got_intersection_id >= 0) {
-                        double length = (intersection_point - cps_.points.col(j)).norm();
-                        if (length > 1e-5) {
-                            cps_.flag_temp[j] = true;
-                            for (double a = length; a >= 0.0; a -= grid_map_->getResolution()) {
-                                bool occ = grid_map_->getInflateOccupancy(
-                                        (a / length) * intersection_point + (1 - a / length) * cps_.points.col(j));
-
-                                if (occ || a < grid_map_->getResolution()) {
-                                    if (occ)
-                                        a += grid_map_->getResolution();
-                                    cps_.base_point[j].push_back(
-                                            (a / length) * intersection_point + (1 - a / length) * cps_.points.col(j));
-                                    cps_.direction[j].push_back((intersection_point - cps_.points.col(j)).normalized());
-                                    break;
-                                }
-                            }
-                        } else {
-                            got_intersection_id = -1;
-                        }
-                    }
-                }
-
-                //step 3
-                if (got_intersection_id >= 0) {
-                    for (int j = got_intersection_id + 1; j <= segment_ids[i].second; ++j)
-                        if (!cps_.flag_temp[j]) {
-                            cps_.base_point[j].push_back(cps_.base_point[j - 1].back());
-                            cps_.direction[j].push_back(cps_.direction[j - 1].back());
-                        }
-
-                    for (int j = got_intersection_id - 1; j >= segment_ids[i].first; --j)
-                        if (!cps_.flag_temp[j]) {
-                            cps_.base_point[j].push_back(cps_.base_point[j + 1].back());
-                            cps_.direction[j].push_back(cps_.direction[j + 1].back());
-                        }
-                } else
-                    ROS_WARN("Failed to generate direction. It doesn't matter.");
-            }
-
-            force_stop_type_ = STOP_FOR_REBOUND;
-            return true;
         }
 
-        return false;
+        /*** Assign parameters to each segment ***/
+        for (int i = 0; i < segment_ids.size(); ++i) {
+            bool a_star_success, base_point_success;
+            getBasePointAndDirectionForSegment(segment_ids[i].first, segment_ids[i].second, cps_, a_star_success, base_point_success);
+            if (!a_star_success) {
+                segment_ids.erase(segment_ids.begin() + i);
+                i--;
+            }
+        }
+
+        force_stop_type_ = STOP_FOR_REBOUND;
+        return true;
     }
 
     bool BsplineOptimizer::BsplineOptimizeTrajRebound(Eigen::MatrixXd &optimal_points, double ts) {
@@ -988,7 +869,6 @@ namespace ego_planner {
         constexpr int MAX_RESART_NUMS_SET = 3;
         do {
             /* ---------- prepare ---------- */
-            min_cost_ = std::numeric_limits<double>::max();
             min_ellip_dist_ = INIT_min_ellip_dist_;
             iter_num_ = 0;
             flag_force_return = false;
@@ -1053,51 +933,6 @@ namespace ego_planner {
                 }
 
                 /*** collision check, phase 3 ***/
-//#define USE_SECOND_CLEARENCE_CHECK
-#ifdef USE_SECOND_CLEARENCE_CHECK
-                bool flag_cls_xyp, flag_cls_xyn, flag_cls_zp, flag_cls_zn;
-                Eigen::Vector3d start_end_vec = traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm);
-                Eigen::Vector3d offset_xy(-start_end_vec(0), start_end_vec(1), 0);
-                offset_xy.normalize();
-                Eigen::Vector3d offset_z = start_end_vec.cross(offset_xy);
-                offset_z.normalize();
-                offset_xy *= cps_.clearance / 2;
-                offset_z *= cps_.clearance / 2;
-
-                Eigen::MatrixXd check_pts(cps_.points.rows(), cps_.points.cols());
-                for (Eigen::Index i = 0; i < cps_.points.cols(); i++)
-                {
-                  check_pts.col(i) = cps_.points.col(i);
-                  check_pts(0, i) += offset_xy(0);
-                  check_pts(1, i) += offset_xy(1);
-                  check_pts(2, i) += offset_xy(2);
-                }
-                flag_cls_xyp = initControlPoints(check_pts, false).size() > 0;
-                for (Eigen::Index i = 0; i < cps_.points.cols(); i++)
-                {
-                  check_pts(0, i) -= 2 * offset_xy(0);
-                  check_pts(1, i) -= 2 * offset_xy(1);
-                  check_pts(2, i) -= 2 * offset_xy(2);
-                }
-                flag_cls_xyn = initControlPoints(check_pts, false).size() > 0;
-                for (Eigen::Index i = 0; i < cps_.points.cols(); i++)
-                {
-                  check_pts(0, i) += offset_xy(0) + offset_z(0);
-                  check_pts(1, i) += offset_xy(1) + offset_z(1);
-                  check_pts(2, i) += offset_xy(2) + offset_z(2);
-                }
-                flag_cls_zp = initControlPoints(check_pts, false).size() > 0;
-                for (Eigen::Index i = 0; i < cps_.points.cols(); i++)
-                {
-                  check_pts(0, i) -= 2 * offset_z(0);
-                  check_pts(1, i) -= 2 * offset_z(1);
-                  check_pts(2, i) -= 2 * offset_z(2);
-                }
-                flag_cls_zn = initControlPoints(check_pts, false).size() > 0;
-                if ((flag_cls_xyp ^ flag_cls_xyn) || (flag_cls_zp ^ flag_cls_zn))
-                  flag_occ = true;
-#endif
-
                 if (!flag_occ) {
                     printf("\033[32miter(+1)=%d,time(ms)=%5.3f,total_t(ms)=%5.3f,cost=%5.3f\n\033[0m", iter_num_,
                            time_ms, total_time_ms, final_cost);
@@ -1165,8 +1000,6 @@ namespace ego_planner {
                                           grid_map_->getResolution()); // Step size is defined as the maximum size that can passes throgth every gird.
             for (double t = tm; t < tmp * 2 / 3; t += t_step) {
                 if (grid_map_->getInflateOccupancy(traj.evaluateDeBoorT(t))) {
-                    // cout << "Refined traj hit_obs, t=" << t << " P=" << traj.evaluateDeBoorT(t).transpose() << endl;
-
                     Eigen::MatrixXd ref_pts(ref_pts_.size(), 3);
                     for (Eigen::Index i = 0; i < ref_pts_.size(); i++) {
                         ref_pts.row(i) = ref_pts_[i].transpose();

@@ -70,8 +70,6 @@ namespace ego_planner {
         void setEnvironment(const GridMap::Ptr &map, const fast_planner::ObjPredictor::Ptr &mov_obj);
 
         void setParam(ros::NodeHandle &nh);
-//    Eigen::MatrixXd BsplineOptimizeTraj(const Eigen::MatrixXd &points, const double &ts,
-//                                        const int &cost_function, int max_num_id, int max_time_id);
 
         /* helper function */
 
@@ -85,14 +83,7 @@ namespace ego_planner {
         void setDroneId(int drone_id);
 
         // optional inputs
-//    void setGuidePath(const vector<Eigen::Vector3d> &guide_pt);
-//    void setWaypoints(const vector<Eigen::Vector3d> &waypts,
-//                      const vector<int> &waypt_idx); // N-2 constraints at most
         void setLocalTargetPt(const Eigen::Vector3d &local_target_pt) { local_target_pt_ = local_target_pt; };
-
-//    void optimize();
-
-//    ControlPoints getControlPoints() { return cps_; };
 
         AStar::Ptr a_star_;
         std::vector<Eigen::Vector3d> ref_pts_;
@@ -108,7 +99,7 @@ namespace ego_planner {
 
         bool BsplineOptimizeTrajRefine(const Eigen::MatrixXd &init_points, double ts, Eigen::MatrixXd &optimal_points);
 
-        inline int getOrder() const { return order_; }
+//        inline int getOrder() const { return order_; }
 
         inline double getSwarmClearance() const { return swarm_clearance_; }
 
@@ -126,30 +117,19 @@ namespace ego_planner {
 
         // main input
         double bspline_interval_{};           // B-spline knot span
-        Eigen::Vector3d end_pt_;            // end of the trajectory
-
-        vector<Eigen::Vector3d> guide_pts_; // geometric guiding path points, N-6
-        vector<Eigen::Vector3d> waypoints_; // waypts constraints
-        vector<int> waypt_idx_;             // waypts constraints index
-        //
-        int max_num_id_{}, max_time_id_{};      // stopping criteria
-        int cost_function_{};                 // used to determine objective function
-        double start_time_{};                 // global time for moving obstacles
 
         /* optimization parameters */
-        int order_{};                         // bspline degree
-        double lambda1_{};                    // jerk smoothness weight
+        int order_{};                           // bspline degree
+        double lambda1_{};                      // jerk smoothness weight
         double lambda2_{}, new_lambda2_{};      // distance weight
-        double lambda3_{};                    // feasibility weight
-        double lambda4_{};                    // curve fitting
+        double lambda3_{};                      // feasibility weight
+        double lambda4_{};                      // curve fitting
 
         double dist0_{}, swarm_clearance_{};    // safe distance
         double max_vel_{}, max_acc_{};          // dynamic limits
 
-        int variable_num_{};                  // optimization variables
-        int iter_num_{};                      // iteration of the solver
-//    Eigen::VectorXd best_variable_;     //
-        double min_cost_;               //
+        int variable_num_{};                    // optimization variables
+        int iter_num_{};                        // iteration of the solver
 
         Eigen::Vector3d local_target_pt_;
 
@@ -160,10 +140,6 @@ namespace ego_planner {
 
         /* cost function */
         /* calculate each part of cost function with control points q as input */
-
-//    static double costFunction(const std::vector<double> &x, std::vector<double> &grad, void *func_data);
-//    void combineCost(const std::vector<double> &x, vector<double> &grad, double &cost);
-//
         // q contains all control points
         static void calcSmoothnessCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient,
                                        bool falg_use_jerk = true);
@@ -175,11 +151,9 @@ namespace ego_planner {
         void calcDistanceCostRebound(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient, int iter_num,
                                      double smoothness_cost);
 
-        void calcMovingObjCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient);
-
         void calcSwarmCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient);
 
-        void calcFitnessCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient);
+        void calcFitnessCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient) const;
 
         bool check_collision_and_rebound();
 
@@ -199,10 +173,13 @@ namespace ego_planner {
 
         void combineCostRefine(const double *x, double *grad, double &f_combine, int n);
 
-        bool func1(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &cps1, ControlPoints &cps2, bool &error);
+        bool func1(double RESOLUTION, double CTRL_PT_DIST, const ControlPoints &cps1, ControlPoints &cps2, bool &error);
+
         bool func2(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &cps1, ControlPoints &cps2);
 
-            /* for benckmark evaluation only */
+        void getBasePointAndDirectionForSegment(const int start_id, const int end_id,
+                                                ControlPoints &cps, bool &a_star_success, bool &base_point_success);
+        /* for benckmark evaluation only */
     public:
         typedef unique_ptr<BsplineOptimizer> Ptr;
 
