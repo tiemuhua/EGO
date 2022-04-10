@@ -48,8 +48,8 @@ private:
 
 	inline void coord2gridIndexFast(const double x, const double y, const double z, int &id_x, int &id_y, int &id_z);
 
-	double getDiagHeu(GridNodePtr node1, GridNodePtr node2);
-	double getManhHeu(GridNodePtr node1, GridNodePtr node2);
+	static double getDiagHeu(GridNodePtr node1, GridNodePtr node2);
+	static double getManhHeu(GridNodePtr node1, GridNodePtr node2);
 	double getEuclHeu(GridNodePtr node1, GridNodePtr node2);
 	inline double getHeu(GridNodePtr node1, GridNodePtr node2);
 
@@ -62,7 +62,7 @@ private:
 
 	inline bool checkOccupancy(const Eigen::Vector3d &pos) { return (bool)grid_map_->getInflateOccupancy(pos); }
 
-	std::vector<GridNodePtr> retrievePath(GridNodePtr current);
+	static std::vector<GridNodePtr> retrievePath(GridNodePtr current);
 
 	double step_size_, inv_step_size_;
 	Eigen::Vector3d center_;
@@ -82,9 +82,9 @@ public:
 	AStar(){};
 	~AStar();
 
-	void initGridMap(GridMap::Ptr occ_map, const Eigen::Vector3i pool_size);
+	void initGridMap(GridMap::Ptr occ_map, const Eigen::Vector3i& pool_size);
 
-	bool AstarSearch(const double step_size, Eigen::Vector3d start_pt, Eigen::Vector3d end_pt);
+	bool AstarSearch(const double step_size, const Eigen::Vector3d& start_pt, const Eigen::Vector3d& end_pt);
 
 	std::vector<Eigen::Vector3d> getPath();
 };

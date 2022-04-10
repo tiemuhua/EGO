@@ -1,14 +1,16 @@
 #include <plan_manage/planner_manager.h>
+#include <memory>
 #include <thread>
+#include <utility>
 #include "visualization_msgs/Marker.h" // zx-todo
 
 namespace ego_planner {
 
     // SECTION interfaces for setup and query
 
-    EGOPlannerManager::EGOPlannerManager() {}
+    EGOPlannerManager::EGOPlannerManager() = default;
 
-    EGOPlannerManager::~EGOPlannerManager() {}
+    EGOPlannerManager::~EGOPlannerManager() = default;
 
     void EGOPlannerManager::initPlanModules(ros::NodeHandle &nh, PlanningVisualization::Ptr vis) {
         /* read algorithm parameters */
@@ -30,22 +32,22 @@ namespace ego_planner {
         // obj_predictor_->init();
         // obj_pub_ = nh.advertise<visualization_msgs::Marker>("/dynamic/obj_prdi", 10); // zx-todo
 
-        bspline_optimizer_.reset(new BsplineOptimizer);
+        bspline_optimizer_ = std::make_unique<BsplineOptimizer>();
         bspline_optimizer_->setParam(nh);
         bspline_optimizer_->setEnvironment(grid_map_, obj_predictor_);
         bspline_optimizer_->a_star_.reset(new AStar);
         bspline_optimizer_->a_star_->initGridMap(grid_map_, Eigen::Vector3i(100, 100, 100));
 
-        visualization_ = vis;
+        visualization_ = std::move(vis);
     }
 
     // !SECTION
 
     // SECTION rebond replanning
 
-    bool EGOPlannerManager::reboundReplan(Eigen::Vector3d start_pt, Eigen::Vector3d start_vel,
-                                          Eigen::Vector3d start_acc, Eigen::Vector3d local_target_pt,
-                                          Eigen::Vector3d local_target_vel, bool flag_polyInit,
+    bool EGOPlannerManager::reboundReplan(const Eigen::Vector3d& start_pt, const Eigen::Vector3d& start_vel,
+                                          const Eigen::Vector3d& start_acc, const Eigen::Vector3d& local_target_pt,
+                                          const Eigen::Vector3d& local_target_vel, bool flag_polyInit,
                                           bool flag_randomPolyTraj) {
         static int count = 0;
         printf("\033[47;30m\n[drone %d replan %d]==============================================\033[0m\n", pp_.drone_id,
@@ -94,13 +96,13 @@ namespace ego_planner {
                     Eigen::Vector3d horizen_dir = ((start_pt - local_target_pt).cross(
                             Eigen::Vector3d(0, 0, 1))).normalized();
                     Eigen::Vector3d vertical_dir = ((start_pt - local_target_pt).cross(horizen_dir)).normalized();
+                    double rand1 = ((double) rand()) / RAND_MAX - 0.5;
+                    double rand2 = ((double) rand()) / RAND_MAX - 0.5;
+                    double magic = -0.978 / (continous_failures_count_ + 0.989) + 0.989;
+                    double length = (start_pt - local_target_pt).norm();
                     Eigen::Vector3d random_inserted_pt = (start_pt + local_target_pt) / 2 +
-                                                         (((double) rand()) / RAND_MAX - 0.5) *
-                                                         (start_pt - local_target_pt).norm() * horizen_dir * 0.8 *
-                                                         (-0.978 / (continous_failures_count_ + 0.989) + 0.989) +
-                                                         (((double) rand()) / RAND_MAX - 0.5) *
-                                                         (start_pt - local_target_pt).norm() * vertical_dir * 0.4 *
-                                                         (-0.978 / (continous_failures_count_ + 0.989) + 0.989);
+                                                         rand1 * length * horizen_dir * 0.8 * magic +
+                                                         rand2 * length * vertical_dir * 0.4 * magic;
                     Eigen::MatrixXd pos(3, 3);
                     pos.col(0) = start_pt;
                     pos.col(1) = random_inserted_pt;
@@ -130,13 +132,12 @@ namespace ego_planner {
                     }
                 } while (flag_too_far || point_set.size() < 7); // To make sure the initial path has enough points.
                 t -= ts;
-                start_end_derivatives.push_back(gl_traj.evaluateVel(0));
-                start_end_derivatives.push_back(local_target_vel);
-                start_end_derivatives.push_back(gl_traj.evaluateAcc(0));
-                start_end_derivatives.push_back(gl_traj.evaluateAcc(t));
-            } else // Initial path generated from previous trajectory.
-            {
-
+                start_end_derivatives.emplace_back(gl_traj.evaluateVel(0));
+                start_end_derivatives.emplace_back(local_target_vel);
+                start_end_derivatives.emplace_back(gl_traj.evaluateAcc(0));
+                start_end_derivatives.emplace_back(gl_traj.evaluateAcc(t));
+            } else {
+                // Initial path generated from previous trajectory.
                 double t;
                 double t_cur = (ros::Time::now() - local_data_.start_time_).toSec();
 
@@ -176,22 +177,19 @@ namespace ego_planner {
                     }
                 }
 
-                double sample_length = 0;
                 double cps_dist = pp_.ctrl_pt_dist * 1.5; // cps_dist will be divided by 1.5 in the next
-                size_t id = 0;
                 do {
                     cps_dist /= 1.5;
                     point_set.clear();
-                    sample_length = 0;
-                    id = 0;
+                    double sample_length = 0;
+                    size_t id = 0;
                     while ((id <= pseudo_arc_length.size() - 2) && sample_length <= pseudo_arc_length.back()) {
                         if (sample_length >= pseudo_arc_length[id] && sample_length < pseudo_arc_length[id + 1]) {
-                            point_set.emplace_back((sample_length - pseudo_arc_length[id]) /
-                                                (pseudo_arc_length[id + 1] - pseudo_arc_length[id]) *
-                                                segment_point[id + 1] +
-                                                (pseudo_arc_length[id + 1] - sample_length) /
-                                                (pseudo_arc_length[id + 1] - pseudo_arc_length[id]) *
-                                                segment_point[id]);
+                            double ratio1 = (sample_length - pseudo_arc_length[id]) /
+                                            (pseudo_arc_length[id + 1] - pseudo_arc_length[id]);
+                            double ratio2 = (pseudo_arc_length[id + 1] - sample_length) /
+                                            (pseudo_arc_length[id + 1] - pseudo_arc_length[id]);
+                            point_set.emplace_back(ratio1 * segment_point[id + 1] + ratio2 * segment_point[id]);
                             sample_length += cps_dist;
                         } else
                             id++;
@@ -362,11 +360,10 @@ namespace ego_planner {
                                                     const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc) {
 
         // generate global reference trajectory
-
         vector<Eigen::Vector3d> points;
         points.push_back(start_pos);
 
-        for (const auto & waypoint : waypoints) {
+        for (const Eigen::Vector3d & waypoint : waypoints) {
             points.push_back(waypoint);
         }
 
@@ -526,8 +523,6 @@ namespace ego_planner {
                                            Eigen::MatrixXd &ctrl_pts, double &dt, double &time_inc) {
         double time_origin = bspline.getTimeSum();
         Eigen::Index seg_num = bspline.getControlPoint().cols() - 3;
-        // double length = bspline.getLength(0.1);
-        // int seg_num = ceil(length / pp_.ctrl_pt_dist);
 
         bspline.lengthenTime(ratio);
         double duration = bspline.getTimeSum();
