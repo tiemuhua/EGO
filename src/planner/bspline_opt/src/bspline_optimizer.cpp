@@ -127,7 +127,7 @@ namespace ego_planner {
             abandon_this_trajectory:;
         }
         return control_pts_buf;
-    } // namespace ego_planner
+    }
 
     // 与reverseCpsBasePoint类似，不再单独写注释
     bool BsplineOptimizer::reverseBasePointForSingleControlPoint(const double RESOLUTION, const double CTRL_PT_DIST,
@@ -287,8 +287,8 @@ namespace ego_planner {
 
         /*** Segment the initial trajectory according to obstacles ***/
         constexpr int ENOUGH_INTERVAL = 2;
-        double step_size = grid_map_->getResolution() /
-                           ((init_points.col(0) - init_points.rightCols(1)).norm() / (init_points.cols() - 1)) / 1.5;
+        double step_size = grid_map_->getResolution() / 1.5 /
+                           ((init_points.col(0) - init_points.rightCols(1)).norm() / (init_points.cols() - 1));
         int in_id = -1, out_id = -1;
         vector<std::pair<int, int>> segment_ids;
         int same_occ_state_times = ENOUGH_INTERVAL + 1;
@@ -851,13 +851,12 @@ namespace ego_planner {
     bool BsplineOptimizer::rebound_optimize(double &final_cost) {
         iter_num_ = 0;
         int start_id = order_;
-        // int end_id = this->cps_.size - order_; //Fixed end
-        int end_id = this->cps_.size; // Free end
+        int end_id = this->cps_.size;
         variable_num_ = 3 * (end_id - start_id);
 
         ros::Time t0 = ros::Time::now(), t1, t2;
         int restart_nums = 0, rebound_times = 0;;
-        bool flag_force_return, flag_occ, success;
+        bool flag_force_return, flag_occ, success, ellip_flag;
         new_lambda2_ = lambda2_;
         constexpr int MAX_RESART_NUMS_SET = 3;
         do {
@@ -886,23 +885,20 @@ namespace ego_planner {
             double total_time_ms = (t2 - t0).toSec() * 1000;
 
             /* ---------- success temporary, check collision again ---------- */
+            ellip_flag = (min_ellip_dist_ != INIT_min_ellip_dist_) && (min_ellip_dist_ > swarm_clearance_);
             if (result == lbfgs::LBFGS_CONVERGENCE ||
                 result == lbfgs::LBFGSERR_MAXIMUMITERATION ||
                 result == lbfgs::LBFGS_ALREADY_MINIMIZED ||
                 result == lbfgs::LBFGS_STOP) {
-                //ROS_WARN("Solver error in planning!, return = %s", lbfgs::lbfgs_strerror(result));
                 flag_force_return = false;
 
                 /*** collision check, phase 1 ***/
-                if ((min_ellip_dist_ != INIT_min_ellip_dist_) && (min_ellip_dist_ > swarm_clearance_)) {
+                if (ellip_flag) {
                     success = false;
                     restart_nums++;
                     initControlPoints(cps_.points, false);
                     new_lambda2_ *= 2;
-
-                    printf("\033[32miter(+1)=%d,time(ms)=%5.3f, swarm too close, keep optimizing\n\033[0m", iter_num_,
-                           time_ms);
-
+                    printf("\033[32miter(+1)=%d,time(ms)=%5.3f, swarm too close, keep optimizing\n\033[0m", iter_num_, time_ms);
                     continue;
                 }
 
@@ -927,16 +923,14 @@ namespace ego_planner {
 
                 /*** collision check, phase 3 ***/
                 if (!flag_occ) {
-                    printf("\033[32miter(+1)=%d,time(ms)=%5.3f,total_t(ms)=%5.3f,cost=%5.3f\n\033[0m", iter_num_,
-                           time_ms, total_time_ms, final_cost);
+                    printf("\033[32miter(+1)=%d,time(ms)=%5.3f,total_t(ms)=%5.3f,cost=%5.3f\n\033[0m",
+                           iter_num_, time_ms, total_time_ms, final_cost);
                     success = true;
                 } else {// restart
                     restart_nums++;
                     initControlPoints(cps_.points, false);
                     new_lambda2_ *= 2;
-
-                    printf("\033[32miter(+1)=%d,time(ms)=%5.3f, collided, keep optimizing\n\033[0m", iter_num_,
-                           time_ms);
+                    printf("\033[32miter(+1)=%d,time(ms)=%5.3f, collided, keep optimizing\n\033[0m", iter_num_, time_ms);
                 }
             } else if (result == lbfgs::LBFGSERR_CANCELED) {
                 flag_force_return = true;
@@ -945,9 +939,7 @@ namespace ego_planner {
             } else {
                 ROS_WARN("Solver error. Return = %d, %s. Skip this planning.", result, lbfgs::lbfgs_strerror(result));
             }
-        } while (
-                ((flag_occ || ((min_ellip_dist_ != INIT_min_ellip_dist_) && (min_ellip_dist_ > swarm_clearance_))) &&
-                 restart_nums < MAX_RESART_NUMS_SET) ||
+        } while ((flag_occ || ellip_flag && restart_nums < MAX_RESART_NUMS_SET) ||
                 (flag_force_return && force_stop_type_ == STOP_FOR_REBOUND && rebound_times <= 20));
 
         return success;
@@ -988,8 +980,9 @@ namespace ego_planner {
             UniformBspline traj = UniformBspline(cps_.points, 3, bspline_interval_);
             double tm, tmp;
             traj.getTimeSpan(tm, tmp);
-            double t_step = (tmp - tm) / ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
-                                          grid_map_->getResolution()); // Step size is defined as the maximum size that can passes throgth every gird.
+            double length = (traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm();
+            // Step size is defined as the maximum size that can passes through every gird.
+            double t_step = (tmp - tm) / ( length / grid_map_->getResolution());
             for (double t = tm; t < tmp * 2 / 3; t += t_step) {
                 if (grid_map_->getInflateOccupancy(traj.evaluateDeBoorT(t))) {
                     Eigen::MatrixXd ref_pts(ref_pts_.size(), 3);

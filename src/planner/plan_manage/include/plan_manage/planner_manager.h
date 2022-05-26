@@ -12,74 +12,76 @@
 #include <ros/ros.h>
 #include <traj_utils/planning_visualization.h>
 
-namespace ego_planner
-{
+namespace ego_planner {
 
-  // Fast Planner Manager
-  // Key algorithms of mapping and planning are called
+    // Fast Planner Manager
+    // Key algorithms of mapping and planning are called
 
-  class EGOPlannerManager
-  {
-    // SECTION stable
-  public:
-    EGOPlannerManager();
-    ~EGOPlannerManager();
+    class EGOPlannerManager {
+        // SECTION stable
+    public:
+        EGOPlannerManager();
 
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+        ~EGOPlannerManager();
 
-    /* main planning interface */
-    bool reboundReplan(const Eigen::Vector3d& start_pt, const Eigen::Vector3d& start_vel, const Eigen::Vector3d& start_acc,
-                       const Eigen::Vector3d& end_pt, const Eigen::Vector3d& end_vel, bool flag_polyInit, bool flag_randomPolyTraj);
-    bool EmergencyStop(const Eigen::Vector3d& stop_pos);
-    bool planGlobalTraj(const Eigen::Vector3d &start_pos, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
-                        const Eigen::Vector3d &end_pos, const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc);
-    bool planGlobalTrajWaypoints(const Eigen::Vector3d &start_pos, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
-                                 const std::vector<Eigen::Vector3d> &waypoints, const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc);
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    void initPlanModules(ros::NodeHandle &nh, PlanningVisualization::Ptr vis = NULL);
+        /* main planning interface */
+        bool reboundReplan(const Eigen::Vector3d &start_pt, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
+                           const Eigen::Vector3d &end_pt, const Eigen::Vector3d &end_vel, bool flag_polyInit, bool flag_randomPolyTraj);
 
-    void deliverTrajToOptimizer(void) { bspline_optimizer_->setSwarmTrajs(&swarm_trajs_buf_); };
+        bool EmergencyStop(const Eigen::Vector3d &stop_pos);
 
-    void setDroneIdtoOpt(void) { bspline_optimizer_->setDroneId(pp_.drone_id); }
+        bool planGlobalTraj(const Eigen::Vector3d &start_pos, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
+                            const Eigen::Vector3d &end_pos, const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc);
 
-    double getSwarmClearance(void) { return bspline_optimizer_->getSwarmClearance(); }
+        void initPlanModules(ros::NodeHandle &nh, PlanningVisualization::Ptr vis = NULL);
 
-    bool checkCollision(int drone_id);
-    
+        void deliverTrajToOptimizer(void) { bspline_optimizer_->setSwarmTrajs(&swarm_trajs_buf_); };
 
-    PlanParameters pp_;
-    LocalTrajData local_data_;
-    GlobalTrajData global_data_;
-    GridMap::Ptr grid_map_;
-    fast_planner::ObjPredictor::Ptr obj_predictor_;    
-    SwarmTrajData swarm_trajs_buf_;
+        void setDroneIdtoOpt(void) { bspline_optimizer_->setDroneId(pp_.drone_id); }
 
-  private:
-    /* main planning algorithms & modules */
-    PlanningVisualization::Ptr visualization_;
+        double getSwarmClearance(void) { return bspline_optimizer_->getSwarmClearance(); }
 
-    // ros::Publisher obj_pub_; //zx-todo 
+        bool checkCollision(int drone_id);
 
-    BsplineOptimizer::Ptr bspline_optimizer_;
 
-    int continous_failures_count_{0};
+        PlanParameters pp_;
+        LocalTrajData local_data_;
+        GlobalTrajData global_data_;
+        GridMap::Ptr grid_map_;
+        fast_planner::ObjPredictor::Ptr obj_predictor_;
+        SwarmTrajData swarm_trajs_buf_;
 
-    void updateTrajInfo(const UniformBspline &position_traj, const ros::Time time_now);
+    private:
+        /* main planning algorithms & modules */
+        PlanningVisualization::Ptr visualization_;
 
-    static void reparamBspline(UniformBspline &bspline, vector<Eigen::Vector3d> &start_end_derivative, double ratio, Eigen::MatrixXd &ctrl_pts, double &dt,
-                        double &time_inc);
+        BsplineOptimizer::Ptr bspline_optimizer_;
 
-    bool refineTrajAlgo(UniformBspline &traj, vector<Eigen::Vector3d> &start_end_derivative, double ratio, double &ts, Eigen::MatrixXd &optimal_control_points);
+        int continuous_failures_count_{0};
 
-    // !SECTION stable
+        bool initPathFromPreviousTrajectory(const double ts, bool &init_fail,
+                                            const Eigen::Vector3d& local_target_pt, const Eigen::Vector3d &local_target_vel,
+                                            vector<Eigen::Vector3d> &start_end_derivatives, vector<Eigen::Vector3d> &point_set);
 
-    // SECTION developing
+        bool initPathAsPoly(double &ts, const bool flag_randomPolyTraj,
+                            const Eigen::Vector3d &start_pt, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
+                            const Eigen::Vector3d &local_target_pt, const Eigen::Vector3d &local_target_vel,
+                            vector<Eigen::Vector3d> &start_end_derivatives, vector<Eigen::Vector3d> &point_set);
 
-  public:
-    typedef unique_ptr<EGOPlannerManager> Ptr;
 
-    // !SECTION
-  };
+        void updateTrajInfo(const UniformBspline &position_traj, const ros::Time time_now);
+
+        static void reparamBspline(UniformBspline &bspline, vector<Eigen::Vector3d> &start_end_derivative, double ratio,
+                                   Eigen::MatrixXd &ctrl_pts, double &dt, double &time_inc);
+
+        bool refineTrajAlgo(UniformBspline &traj, vector<Eigen::Vector3d> &start_end_derivative, double ratio, double &ts,
+                            Eigen::MatrixXd &optimal_control_points);
+
+    public:
+        typedef unique_ptr<EGOPlannerManager> Ptr;
+    };
 } // namespace ego_planner
 
 #endif

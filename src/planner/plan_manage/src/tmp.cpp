@@ -67,26 +67,26 @@ namespace ego_planner {
         // pp_.ctrl_pt_dist / pp_.max_vel_ is too tense, and will surely exceed the acc/vel limits
         vector<Eigen::Vector3d> point_set, start_end_derivatives;
         static bool flag_first_call = true, flag_force_polynomial = false;
-        bool init_success = true;
+        bool flag_regenerate = false;
         do {
             point_set.clear();
             start_end_derivatives.clear();
-            init_success = true;
+            flag_regenerate = false;
 
             if (flag_first_call || flag_polyInit || flag_force_polynomial) {
                 // Initial path generated from a min-snap traj by order.
                 flag_first_call = false;
                 flag_force_polynomial = false;
-                initPathAsPoly(ts, flag_randomPolyTraj, start_pt, start_vel, start_acc, local_target_pt, local_target_vel,
-                               start_end_derivatives, point_set);
+                initpath1(ts, flag_randomPolyTraj, start_pt, start_vel, start_acc, local_target_pt, local_target_vel, start_end_derivatives,
+                          point_set);
             } else {
                 // Initial path generated from previous trajectory.
                 bool init_fail = false;
-                init_success = initPathFromPreviousTrajectory(ts, init_fail, local_target_pt, local_target_vel, start_end_derivatives, point_set);
-                flag_force_polynomial = true;
+                flag_regenerate = initPathFromPreviousTrajectory(ts, init_fail, flag_force_polynomial,
+                                                                 local_target_pt, local_target_vel, start_end_derivatives, point_set);
                 if (init_fail) { return false; }
             }
-        } while (!init_success);
+        } while (flag_regenerate);
 
         Eigen::MatrixXd ctrl_pts, ctrl_pts_temp;
         UniformBspline::parameterizeToBspline(ts, point_set, start_end_derivatives, ctrl_pts);
@@ -196,10 +196,11 @@ namespace ego_planner {
         return true;
     }
 
-    bool EGOPlannerManager::initPathAsPoly(double &ts, const bool flag_randomPolyTraj,
-                                           const Eigen::Vector3d &start_pt, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
-                                           const Eigen::Vector3d &local_target_pt, const Eigen::Vector3d &local_target_vel,
-                                           vector<Eigen::Vector3d> &start_end_derivatives, vector<Eigen::Vector3d> &point_set) {
+    bool EGOPlannerManager::initpath1(double &ts, const bool flag_randomPolyTraj,
+                                      const Eigen::Vector3d &start_pt, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
+                                      const Eigen::Vector3d &local_target_pt, const Eigen::Vector3d &local_target_vel,
+                                      vector<Eigen::Vector3d> &start_end_derivatives, vector<Eigen::Vector3d> &point_set
+    ) {
         // Initial path generated from a min-snap traj by order.
 
         PolynomialTraj gl_traj;
@@ -257,8 +258,8 @@ namespace ego_planner {
         start_end_derivatives.emplace_back(gl_traj.evaluateAcc(t));
     }
 
-    bool EGOPlannerManager::initPathFromPreviousTrajectory(const double ts, bool &init_fail,
-                                                           const Eigen::Vector3d &local_target_pt, const Eigen::Vector3d &local_target_vel,
+    bool EGOPlannerManager::initPathFromPreviousTrajectory(const double ts, bool &init_fail, bool &flag_force_polynomial,
+                                                           const Eigen::Vector3d local_target_pt, const Eigen::Vector3d local_target_vel,
                                                            vector<Eigen::Vector3d> &start_end_derivatives, vector<Eigen::Vector3d> &point_set) {
         vector<double> pseudo_arc_length;
         vector<Eigen::Vector3d> segment_point;
@@ -323,9 +324,10 @@ namespace ego_planner {
 
         if (point_set.size() > pp_.planning_horizen_ / pp_.ctrl_pt_dist * 3) {
             // The initial path is un normally too long!
-            return false;
+            flag_force_polynomial = true;
+            return true;
         }
-        return true;
+        return false;
     }
 
 
@@ -384,7 +386,8 @@ namespace ego_planner {
                 int id_num = floor(dist / dist_thresh) + 1;
 
                 for (int j = 1; j < id_num; ++j) {
-                    Eigen::Vector3d inter_pt = points.at(i) * (1.0 - double(j) / id_num) + points.at(i + 1) * double(j) / id_num;
+                    Eigen::Vector3d inter_pt =
+                            points.at(i) * (1.0 - double(j) / id_num) + points.at(i + 1) * double(j) / id_num;
                     inter_points.push_back(inter_pt);
                 }
             }
