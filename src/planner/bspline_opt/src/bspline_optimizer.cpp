@@ -49,40 +49,27 @@ namespace ego_planner {
         const double CTRL_PT_DIST = (cps_.points.col(0) - cps_.points.col(cps_.size - 1)).norm() / (cps_.size - 1);
 
         // Step 1. Find the opposite vectors and base points for every segment.
-        std::vector<std::pair<ControlPoints, ControlPoints>> RichInfoSegs;
-        for (int i = 0; i < seg_upbound; i++) {
-            std::pair<ControlPoints, ControlPoints> RichInfoOneSeg;
-            ControlPoints RichInfoOneSeg_temp;
-            cps_.segment(RichInfoOneSeg_temp, segments[i].first, segments[i].second);
-            RichInfoOneSeg.first = RichInfoOneSeg_temp;
-            RichInfoOneSeg.second = RichInfoOneSeg_temp;
-            RichInfoSegs.push_back(RichInfoOneSeg);
-        }
-
-        vector<bool> is_valids;
-        for (pair<ControlPoints, ControlPoints> &rich_info_seg: RichInfoSegs) {
-            bool is_valid = rich_info_seg.first.size >= 0;
-            if (rich_info_seg.first.size > 1) {
-                bool error = false;
-                is_valid = func1(RESOLUTION, CTRL_PT_DIST, rich_info_seg.first, rich_info_seg.second, error);
-                if (error) {
-                    return {};
-                }
-            } else if (rich_info_seg.first.size == 1) {
-                is_valid = func2(RESOLUTION, CTRL_PT_DIST, rich_info_seg.first, rich_info_seg.second);
-            }
-            is_valids.push_back(is_valid);
-        }
-        vector<pair<ControlPoints, ControlPoints>> valid_rich_info_segs;
+        vector<ControlPoints> origin_cps_segments, reversed_cps_segments;
         vector<std::pair<int, int>> valid_segments;
-        for (int i = 0; i < seg_upbound; ++i) {
-            if (is_valids[i]) {
-                valid_rich_info_segs.emplace_back(move(RichInfoSegs[i]));
-                valid_segments.emplace_back(move(segments[i]));
+        for (const auto seg: segments) {
+            ControlPoints origin_cps_segment;
+            cps_.segment(origin_cps_segment, seg.first, seg.second);
+            bool valid = origin_cps_segment.size >= 0;
+            ControlPoints reversed_cps_segment;
+            if (origin_cps_segment.size > 1) {
+                bool error = false;
+                valid = reverseCpsBasePoint(RESOLUTION, CTRL_PT_DIST, origin_cps_segment, reversed_cps_segment, error);
+                if (error) { return {}; }
+            } else if (origin_cps_segment.size == 1) {
+                valid = reverseBasePointForSingleControlPoint(RESOLUTION, CTRL_PT_DIST, origin_cps_segment, reversed_cps_segment);
+            }
+            if (valid) {
+                origin_cps_segments.emplace_back(origin_cps_segment);
+                reversed_cps_segments.emplace_back(reversed_cps_segment);
+                valid_segments.emplace_back(seg);
             }
         }
         segments = move(valid_segments);
-        RichInfoSegs = move(valid_rich_info_segs);
         seg_upbound = segments.size();
 
         // Step 2. Assemble each segment to make up the new control point sequence.
@@ -101,18 +88,23 @@ namespace ego_planner {
             int cp_id = 0, seg_id = 0, cp_of_seg_id = 0;
             while (cp_id < cps_.size) {
                 if (seg_id >= seg_upbound || cp_id < segments[seg_id].first || cp_id > segments[seg_id].second) {
+                    // 我们只考虑前三个障碍物，seg_id >= seg_upbound后面的障碍物就不考虑了
+                    // cp_id < segments[seg_id].first || cp_id > segments[seg_id].second说明当前控制点没有在障碍物里面
                     cpsOneSample.points.col(cp_id) = cps_.points.col(cp_id);
                     cpsOneSample.base_point[cp_id] = cps_.base_point[cp_id];
                     cpsOneSample.direction[cp_id] = cps_.direction[cp_id];
                 } else if (cp_id >= segments[seg_id].first && cp_id <= segments[seg_id].second) {
-                    if (!((traj_id >> seg_id) & 1)) {
-                        cpsOneSample.points.col(cp_id) = RichInfoSegs[seg_id].first.points.col(cp_of_seg_id);
-                        cpsOneSample.base_point[cp_id] = RichInfoSegs[seg_id].first.base_point[cp_of_seg_id];
-                        cpsOneSample.direction[cp_id] = RichInfoSegs[seg_id].first.direction[cp_of_seg_id];
-                    } else if (RichInfoSegs[seg_id].second.size) {
-                        cpsOneSample.points.col(cp_id) = RichInfoSegs[seg_id].second.points.col(cp_of_seg_id);
-                        cpsOneSample.base_point[cp_id] = RichInfoSegs[seg_id].second.base_point[cp_of_seg_id];
-                        cpsOneSample.direction[cp_id] = RichInfoSegs[seg_id].second.direction[cp_of_seg_id];
+                    // 现在控制点在前三个障碍物里面
+                    if (!((traj_id >> seg_id) & 1)) { //状态压缩
+                        //按照状态压缩应该用原来的控制点
+                        cpsOneSample.points.col(cp_id) = origin_cps_segments[seg_id].points.col(cp_of_seg_id);
+                        cpsOneSample.base_point[cp_id] = origin_cps_segments[seg_id].base_point[cp_of_seg_id];
+                        cpsOneSample.direction[cp_id] = origin_cps_segments[seg_id].direction[cp_of_seg_id];
+                    } else if (reversed_cps_segments[seg_id].size) {
+                        //按照状态压缩，应该用另一边的控制点。如果找到了障碍物另一边的控制点，那就用另一边的控制点。
+                        cpsOneSample.points.col(cp_id) = reversed_cps_segments[seg_id].points.col(cp_of_seg_id);
+                        cpsOneSample.base_point[cp_id] = reversed_cps_segments[seg_id].base_point[cp_of_seg_id];
+                        cpsOneSample.direction[cp_id] = reversed_cps_segments[seg_id].direction[cp_of_seg_id];
                     } else {
                         goto abandon_this_trajectory;
                     }
@@ -137,8 +129,9 @@ namespace ego_planner {
         return control_pts_buf;
     } // namespace ego_planner
 
-    bool BsplineOptimizer::func2(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &cps1,
-                                 ControlPoints &cps2) {
+    // 与reverseCpsBasePoint类似，不再单独写注释
+    bool BsplineOptimizer::reverseBasePointForSingleControlPoint(const double RESOLUTION, const double CTRL_PT_DIST,
+                                                                 const ControlPoints &cps1, ControlPoints &cps2) {
         Eigen::Vector3d base_vec_reverse = -cps1.direction[0][0];
         Eigen::Vector3d base_pt_reverse = cps1.points.col(0) +
                                           base_vec_reverse * (cps1.base_point[0][0] - cps1.points.col(0)).norm();
@@ -170,17 +163,21 @@ namespace ego_planner {
         return true;
     }
 
-    bool BsplineOptimizer::func1(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &cps1,
-                                 ControlPoints &cps2, bool &error) {
+    /**
+     * @brief 原始控制点origin_cps对应的基点都在障碍物的一侧，我们希望能够在障碍物的另一侧找到一组基点和方向，作为reversed_cps。
+     * @return 没找到的话返回false
+     * @param error 原始控制点数据有问题的话error=true
+     * */
+    bool BsplineOptimizer::reverseCpsBasePoint(const double RESOLUTION, const double CTRL_PT_DIST,
+                                               const ControlPoints &origin_cps, ControlPoints &reversed_cps, bool &error) {
         error = false;
         int occ_start_id = -1, occ_end_id = -1;
         Eigen::Vector3d occ_start_pt, occ_end_pt;
-        for (int j = 0; j < cps1.size - 1; j++) {
-            double step_size = RESOLUTION / (cps1.points.col(j) -
-                                             cps1.points.col(j + 1)).norm() / 2;
+        // 在原始控制点中插值，找到原始轨迹进入障碍物的点occ_start_pt
+        for (int j = 0; j < origin_cps.size - 1; j++) {
+            double step_size = RESOLUTION / (origin_cps.points.col(j) - origin_cps.points.col(j + 1)).norm() / 2;
             for (double a = 1; a > 0; a -= step_size) {
-                Eigen::Vector3d pt(a * cps1.points.col(j) +
-                                   (1 - a) * cps1.points.col(j + 1));
+                Eigen::Vector3d pt(a * origin_cps.points.col(j) + (1 - a) * origin_cps.points.col(j + 1));
                 if (grid_map_->getInflateOccupancy(pt)) {
                     occ_start_id = j;
                     occ_start_pt = pt;
@@ -189,12 +186,12 @@ namespace ego_planner {
             }
         }
         exit_multi_loop1:;
-        for (int j = cps1.size - 1; j >= 1; j--) {
-            double step_size = RESOLUTION / (cps1.points.col(j) -
-                                             cps1.points.col(j - 1)).norm();
+
+        // 在原始控制点中插值，找到原始轨迹离开障碍物的点occ_end_pt
+        for (int j = origin_cps.size - 1; j >= 1; j--) {
+            double step_size = RESOLUTION / (origin_cps.points.col(j) - origin_cps.points.col(j - 1)).norm();
             for (double a = 1; a > 0; a -= step_size) {
-                Eigen::Vector3d pt(a * cps1.points.col(j) +
-                                   (1 - a) * cps1.points.col(j - 1));
+                Eigen::Vector3d pt(a * origin_cps.points.col(j) + (1 - a) * origin_cps.points.col(j - 1));
                 if (grid_map_->getInflateOccupancy(pt)) {
                     occ_end_id = j;
                     occ_end_pt = pt;
@@ -207,7 +204,7 @@ namespace ego_planner {
         // double check
         if (occ_start_id == -1 || occ_end_id == -1) {
             // It means that the first or the last control points of one segment are in obstacles, which is not allowed.
-            // ROS_WARN("What? occ_start_id=%d, occ_end_id=%d", occ_start_id, occ_end_id);
+            ROS_WARN("What? occ_start_id=%d, occ_end_id=%d", occ_start_id, occ_end_id);
             return false;
         }
 
@@ -216,13 +213,13 @@ namespace ego_planner {
          *******************************************************************************/
         for (int j = occ_start_id; j <= occ_end_id; j++) {
             Eigen::Vector3d base_pt_reverse, base_vec_reverse;
-            if (cps1.base_point[j].size() != 1) {
+            if (origin_cps.base_point[j].size() != 1) {
                 ROS_ERROR("Wrong number of base_points!!! Should not be happen!.");
                 error = true;
                 return false;
             }
 
-            base_vec_reverse = -cps1.direction[j][0];
+            base_vec_reverse = -origin_cps.direction[j][0];
 
             // The start and the end case must get taken special care of.
             if (j == occ_start_id) {
@@ -230,10 +227,12 @@ namespace ego_planner {
             } else if (j == occ_end_id) {
                 base_pt_reverse = occ_end_pt;
             } else {
-                base_pt_reverse = cps1.points.col(j) +
-                                  base_vec_reverse * (cps1.base_point[j][0] - cps1.points.col(j)).norm();
+                base_pt_reverse = origin_cps.points.col(j) +
+                                  base_vec_reverse * (origin_cps.base_point[j][0] - origin_cps.points.col(j)).norm();
             }
 
+            // 以原始基点为出发点，沿base_vec反向延伸，每次延伸RESOLUTION，直到走出障碍物。
+            // 如果延伸了5 * CTRL_PT_DIST还没有走出障碍物，返回false。
             if (grid_map_->getInflateOccupancy(base_pt_reverse)) {
                 // Search outward.
                 double l_upbound = 5 * CTRL_PT_DIST; // "5" is the threshold.
@@ -241,8 +240,8 @@ namespace ego_planner {
                 for (; l <= l_upbound; l += RESOLUTION) {
                     Eigen::Vector3d base_pt_temp = base_pt_reverse + l * base_vec_reverse;
                     if (!grid_map_->getInflateOccupancy(base_pt_temp)) {
-                        cps2.base_point[j][0] = base_pt_temp;
-                        cps2.direction[j][0] = base_vec_reverse;
+                        reversed_cps.base_point[j][0] = base_pt_temp;
+                        reversed_cps.direction[j][0] = base_vec_reverse;
                         break;
                     }
                 }
@@ -250,39 +249,34 @@ namespace ego_planner {
                     ROS_WARN("Can't find the new base points at the opposite within the threshold, j=%d", j);
                     return false;
                 }
-            } else if ((base_pt_reverse - cps1.points.col(j)).norm() >= RESOLUTION) {
+            } else if ((base_pt_reverse - origin_cps.points.col(j)).norm() >= RESOLUTION) {
                 // Unnecessary to search.
-                cps2.base_point[j][0] = base_pt_reverse;
-                cps2.direction[j][0] = base_vec_reverse;
+                reversed_cps.base_point[j][0] = base_pt_reverse;
+                reversed_cps.direction[j][0] = base_vec_reverse;
             } else {
                 ROS_WARN("base_point and control point are too close!");
-                cout << "base_point=" << cps1.base_point[j][0].transpose() << " control point="
-                     << cps1.points.col(j).transpose() << endl;
+                cout << "base_point=" << origin_cps.base_point[j][0].transpose() << " control point="
+                     << origin_cps.points.col(j).transpose() << endl;
                 return false;
             }
         }
 
         /*****************************************************************************************************
-         * Assign the base points to control points within [0, occ_start_id) and (occ_end_id, cps1.size()-1] *
+         * Assign the base points to control points within [0, occ_start_id) and (occ_end_id, origin_cps.size()-1] *
          *****************************************************************************************************/
-        if (cps2.size) {
+        if (reversed_cps.size) {
             for (int j = occ_start_id - 1; j >= 0; j--) {
-                cps2.base_point[j][0] = cps2.base_point[occ_start_id][0];
-                cps2.direction[j][0] = cps2.direction[occ_start_id][0];
+                reversed_cps.base_point[j][0] = reversed_cps.base_point[occ_start_id][0];
+                reversed_cps.direction[j][0] = reversed_cps.direction[occ_start_id][0];
             }
-            for (int j = occ_end_id + 1; j < cps2.size; j++) {
-                cps2.base_point[j][0] = cps2.base_point[occ_end_id][0];
-                cps2.direction[j][0] = cps2.direction[occ_end_id][0];
+            for (int j = occ_end_id + 1; j < reversed_cps.size; j++) {
+                reversed_cps.base_point[j][0] = reversed_cps.base_point[occ_end_id][0];
+                reversed_cps.direction[j][0] = reversed_cps.direction[occ_end_id][0];
             }
         }
         return true;
     }
 
-
-    /**
-     * This function is very similar to check_collision_and_rebound().
-     * It was written separately, just because I did it once and it has been running stably since March 2020.
-     * But I will merge then someday.*/
     std::vector<std::pair<int, int>>
     BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points, bool flag_first_init /*= true*/) {
         if (flag_first_init) {
@@ -374,14 +368,14 @@ namespace ego_planner {
         vector<std::pair<int, int>> final_segment_ids;
 
         /*** Assign data to each segment ***/
-        for (size_t i = 0; i < segment_ids.size(); i++) {
+        for (auto & segment_id : segment_ids) {
             bool a_star_success, base_point_success;
-            getBasePointAndDirectionForSegment(segment_ids[i].first, segment_ids[i].second, cps_, a_star_success, base_point_success);
+            getBasePointAndDirectionForSegment(segment_id.first, segment_id.second, cps_, a_star_success, base_point_success);
             if (!a_star_success) {
                 return {};
             }
             if (base_point_success) {
-                final_segment_ids.emplace_back(segment_ids[i]);
+                final_segment_ids.emplace_back(segment_id);
             }
         }
 
@@ -417,7 +411,7 @@ namespace ego_planner {
     void BsplineOptimizer::calcSwarmCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient) {
         cost = 0.0;
         // Only check the first 2/3 points
-        int end_idx = q.cols() - order_ - (double) (q.cols() - 2 * order_) * 1.0 / 3.0;
+        Eigen::Index end_idx = q.cols() - order_ - (double) (q.cols() - 2 * order_) * 1.0 / 3.0;
         const double CLEARANCE = swarm_clearance_ * 2;
         double t_now = ros::Time::now().toSec();
         constexpr double a = 2.0, b = 1.0, inv_a2 = 1 / a / a, inv_b2 = 1 / b / b;
@@ -464,7 +458,7 @@ namespace ego_planner {
     void BsplineOptimizer::calcDistanceCostRebound(const Eigen::MatrixXd &q, double &cost,
                                                    Eigen::MatrixXd &gradient, int iter_num, double smoothness_cost) {
         cost = 0.0;
-        int end_idx = q.cols() - order_;
+        Eigen::Index end_idx = q.cols() - order_;
         double demarcation = cps_.clearance;
         double a = 3 * demarcation, b = -3 * pow(demarcation, 2), c = pow(demarcation, 3);
 
@@ -498,7 +492,7 @@ namespace ego_planner {
 
         cost = 0.0;
 
-        int end_idx = q.cols() - order_;
+        Eigen::Index end_idx = q.cols() - order_;
 
         // def: f = |x*v|^2/a^2 + |x×v|^2/b^2
         double a2 = 25, b2 = 1;
@@ -745,7 +739,6 @@ namespace ego_planner {
         }
     }
 
-
     bool BsplineOptimizer::check_collision_and_rebound() {
         int end_idx = cps_.size - order_;
 
@@ -952,7 +945,6 @@ namespace ego_planner {
             } else {
                 ROS_WARN("Solver error. Return = %d, %s. Skip this planning.", result, lbfgs::lbfgs_strerror(result));
             }
-
         } while (
                 ((flag_occ || ((min_ellip_dist_ != INIT_min_ellip_dist_) && (min_ellip_dist_ > swarm_clearance_))) &&
                  restart_nums < MAX_RESART_NUMS_SET) ||

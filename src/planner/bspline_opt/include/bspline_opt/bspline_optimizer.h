@@ -173,9 +173,9 @@ namespace ego_planner {
 
         void combineCostRefine(const double *x, double *grad, double &f_combine, int n);
 
-        bool func1(double RESOLUTION, double CTRL_PT_DIST, const ControlPoints &cps1, ControlPoints &cps2, bool &error);
+        bool reverseCpsBasePoint(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &origin_cps, ControlPoints &reversed_cps, bool &error);
 
-        bool func2(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &cps1, ControlPoints &cps2);
+        bool reverseBasePointForSingleControlPoint(const double RESOLUTION, const double CTRL_PT_DIST, const ControlPoints &cps1, ControlPoints &cps2);
 
         void getBasePointAndDirectionForSegment(const int start_id, const int end_id,
                                                 ControlPoints &cps, bool &a_star_success, bool &base_point_success);
