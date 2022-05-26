@@ -37,9 +37,9 @@ namespace ego_planner {
 
     void BsplineOptimizer::setDroneId(const int drone_id) { drone_id_ = drone_id; }
 
-    std::vector<ControlPoints> BsplineOptimizer::distinctiveTrajs(vector<std::pair<int, int>> segments) {
+    std::vector <ControlPoints> BsplineOptimizer::distinctiveTrajs(vector <std::pair<int, int>> segments) {
         if (segments.empty()) {// will be invoked again later.
-            std::vector<ControlPoints> oneSeg;
+            std::vector <ControlPoints> oneSeg;
             oneSeg.push_back(cps_);
             return oneSeg;
         }
@@ -49,8 +49,8 @@ namespace ego_planner {
         const double CTRL_PT_DIST = (cps_.points.col(0) - cps_.points.col(cps_.size - 1)).norm() / (cps_.size - 1);
 
         // Step 1. Find the opposite vectors and base points for every segment.
-        vector<ControlPoints> origin_cps_segments, reversed_cps_segments;
-        vector<std::pair<int, int>> valid_segments;
+        vector <ControlPoints> origin_cps_segments, reversed_cps_segments;
+        vector <std::pair<int, int>> valid_segments;
         for (const auto seg: segments) {
             ControlPoints origin_cps_segment;
             cps_.segment(origin_cps_segment, seg.first, seg.second);
@@ -74,12 +74,12 @@ namespace ego_planner {
 
         // Step 2. Assemble each segment to make up the new control point sequence.
         if (segments.empty()) { // After the erase operation above, segment legth will decrease to 0 again.
-            std::vector<ControlPoints> oneSeg;
+            std::vector <ControlPoints> oneSeg;
             oneSeg.push_back(cps_);
             return oneSeg;
         }
 
-        std::vector<ControlPoints> control_pts_buf;
+        std::vector <ControlPoints> control_pts_buf;
         int max_traj_nums = (1 << seg_upbound);
         for (int traj_id = 0; traj_id < max_traj_nums; ++traj_id) {
             ControlPoints cpsOneSample;
@@ -131,10 +131,11 @@ namespace ego_planner {
 
     // 与reverseCpsBasePoint类似，不再单独写注释
     bool BsplineOptimizer::reverseBasePointForSingleControlPoint(const double RESOLUTION, const double CTRL_PT_DIST,
-                                                                 const ControlPoints &cps1, ControlPoints &cps2) {
-        Eigen::Vector3d base_vec_reverse = -cps1.direction[0][0];
-        Eigen::Vector3d base_pt_reverse = cps1.points.col(0) +
-                                          base_vec_reverse * (cps1.base_point[0][0] - cps1.points.col(0)).norm();
+                                                                 const ControlPoints &origin_cps, ControlPoints &reversed_cps) {
+        reversed_cps = origin_cps;//这一步的目的是为base_point和direction分配内存。
+        Eigen::Vector3d base_vec_reverse = -origin_cps.direction[0][0];
+        Eigen::Vector3d base_pt_reverse = origin_cps.points.col(0) +
+                                          base_vec_reverse * (origin_cps.base_point[0][0] - origin_cps.points.col(0)).norm();
 
         if (grid_map_->getInflateOccupancy(base_pt_reverse)) {
             // Search outward.
@@ -143,8 +144,8 @@ namespace ego_planner {
             for (; l <= l_upbound; l += RESOLUTION) {
                 Eigen::Vector3d base_pt_temp = base_pt_reverse + l * base_vec_reverse;
                 if (!grid_map_->getInflateOccupancy(base_pt_temp)) {
-                    cps2.base_point[0][0] = base_pt_temp;
-                    cps2.direction[0][0] = base_vec_reverse;
+                    reversed_cps.base_point[0][0] = base_pt_temp;
+                    reversed_cps.direction[0][0] = base_vec_reverse;
                     break;
                 }
             }
@@ -152,10 +153,10 @@ namespace ego_planner {
                 ROS_WARN("Can't find the new base points at the opposite within the threshold");
                 return false;
             }
-        } else if ((base_pt_reverse - cps1.points.col(0)).norm() >= RESOLUTION) {
+        } else if ((base_pt_reverse - origin_cps.points.col(0)).norm() >= RESOLUTION) {
             // Unnecessary to search.
-            cps2.base_point[0][0] = base_pt_reverse;
-            cps2.direction[0][0] = base_vec_reverse;
+            reversed_cps.base_point[0][0] = base_pt_reverse;
+            reversed_cps.direction[0][0] = base_vec_reverse;
         } else {
             ROS_WARN("base_point and control point are too close!, 2");
             return false;
@@ -170,6 +171,7 @@ namespace ego_planner {
      * */
     bool BsplineOptimizer::reverseCpsBasePoint(const double RESOLUTION, const double CTRL_PT_DIST,
                                                const ControlPoints &origin_cps, ControlPoints &reversed_cps, bool &error) {
+        reversed_cps = origin_cps;//这一步的目的是为base_point和direction分配内存。
         error = false;
         int occ_start_id = -1, occ_end_id = -1;
         Eigen::Vector3d occ_start_pt, occ_end_pt;
@@ -277,7 +279,7 @@ namespace ego_planner {
         return true;
     }
 
-    std::vector<std::pair<int, int>>
+    std::vector <std::pair<int, int>>
     BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points, bool flag_first_init /*= true*/) {
         if (flag_first_init) {
             cps_.clearance = dist0_;
@@ -290,7 +292,7 @@ namespace ego_planner {
         double step_size = grid_map_->getResolution() / 1.5 /
                            ((init_points.col(0) - init_points.rightCols(1)).norm() / (init_points.cols() - 1));
         int in_id = -1, out_id = -1;
-        vector<std::pair<int, int>> segment_ids;
+        vector <std::pair<int, int>> segment_ids;
         int same_occ_state_times = ENOUGH_INTERVAL + 1;
         bool occ, last_occ = false;
         bool flag_got_start = false, flag_got_end = false, flag_got_end_maybe = false;
@@ -332,13 +334,13 @@ namespace ego_planner {
 
         // return in advance
         if (segment_ids.empty()) {
-            vector<std::pair<int, int>> blank_ret;
+            vector <std::pair<int, int>> blank_ret;
             return blank_ret;
         }
 
         /*** calculate bounds ***/
         Eigen::Index id_low_bound, id_up_bound;
-        vector<std::pair<int, int>> bounds(segment_ids.size());
+        vector <std::pair<int, int>> bounds(segment_ids.size());
         for (size_t i = 0; i < segment_ids.size(); i++) {
             if (i == segment_ids.size() - 1) {
                 id_up_bound = init_points.cols() - order_ - 1;
@@ -365,10 +367,10 @@ namespace ego_planner {
         }
 
         // Used for return
-        vector<std::pair<int, int>> final_segment_ids;
+        vector <std::pair<int, int>> final_segment_ids;
 
         /*** Assign data to each segment ***/
-        for (auto & segment_id : segment_ids) {
+        for (auto &segment_id: segment_ids) {
             bool a_star_success, base_point_success;
             getBasePointAndDirectionForSegment(segment_id.first, segment_id.second, cps_, a_star_success, base_point_success);
             if (!a_star_success) {
@@ -621,7 +623,7 @@ namespace ego_planner {
                                                               ControlPoints &cps, bool &a_star_success, bool &base_point_success) {
         for (int j = start_id; j <= end_id; ++j)
             cps.flag_temp[j] = false;
-        vector<Eigen::Vector3d> a_star_path;
+        vector <Eigen::Vector3d> a_star_path;
         if (a_star_->AstarSearch(0.1, cps.points.col(start_id), cps.points.col(end_id))) {
             a_star_path = a_star_->getPath();
             a_star_success = true;
@@ -743,7 +745,7 @@ namespace ego_planner {
         int end_idx = cps_.size - order_;
 
         /*** Check and segment the initial trajectory according to obstacles ***/
-        vector<std::pair<int, int>> segment_ids;
+        vector <std::pair<int, int>> segment_ids;
         bool flag_new_obs_valid = false;
         int i_end = end_idx - (end_idx - order_) / 3;
         for (int i = order_ - 1; i <= i_end; ++i) {
@@ -940,7 +942,7 @@ namespace ego_planner {
                 ROS_WARN("Solver error. Return = %d, %s. Skip this planning.", result, lbfgs::lbfgs_strerror(result));
             }
         } while ((flag_occ || ellip_flag && restart_nums < MAX_RESART_NUMS_SET) ||
-                (flag_force_return && force_stop_type_ == STOP_FOR_REBOUND && rebound_times <= 20));
+                 (flag_force_return && force_stop_type_ == STOP_FOR_REBOUND && rebound_times <= 20));
 
         return success;
     }
@@ -982,7 +984,7 @@ namespace ego_planner {
             traj.getTimeSpan(tm, tmp);
             double length = (traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm();
             // Step size is defined as the maximum size that can passes through every gird.
-            double t_step = (tmp - tm) / ( length / grid_map_->getResolution());
+            double t_step = (tmp - tm) / (length / grid_map_->getResolution());
             for (double t = tm; t < tmp * 2 / 3; t += t_step) {
                 if (grid_map_->getInflateOccupancy(traj.evaluateDeBoorT(t))) {
                     Eigen::MatrixXd ref_pts(ref_pts_.size(), 3);
