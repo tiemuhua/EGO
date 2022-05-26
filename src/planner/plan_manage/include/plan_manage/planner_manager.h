@@ -65,7 +65,7 @@ namespace ego_planner {
                                             const Eigen::Vector3d& local_target_pt, const Eigen::Vector3d &local_target_vel,
                                             vector<Eigen::Vector3d> &start_end_derivatives, vector<Eigen::Vector3d> &point_set);
 
-        bool initPathAsPoly(double &ts, const bool flag_randomPolyTraj,
+        void initPathAsPoly(double &ts, const bool flag_randomPolyTraj,
                             const Eigen::Vector3d &start_pt, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
                             const Eigen::Vector3d &local_target_pt, const Eigen::Vector3d &local_target_vel,
                             vector<Eigen::Vector3d> &start_end_derivatives, vector<Eigen::Vector3d> &point_set);

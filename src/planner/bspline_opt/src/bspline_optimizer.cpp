@@ -1030,7 +1030,7 @@ namespace ego_planner {
         f_combine = lambda1_ * f_smoothness + new_lambda2_ * f_distance + lambda3_ * f_feasibility +
                     new_lambda2_ * f_swarm + lambda2_ * f_terminal;
         f_combine = lambda1_ * f_smoothness + new_lambda2_ * f_distance + lambda3_ * f_feasibility;
-        printf("origin %f %f %f %f\n", f_smoothness, f_distance, f_feasibility, f_combine);
+        // printf("origin %f %f %f %f\n", f_smoothness, f_distance, f_feasibility, f_combine);
 
         Eigen::MatrixXd grad_3D = lambda1_ * g_smoothness + new_lambda2_ * g_distance + lambda3_ * g_feasibility +
                                   new_lambda2_ * g_swarm + lambda2_ * g_terminal;

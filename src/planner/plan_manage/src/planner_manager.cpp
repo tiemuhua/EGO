@@ -83,7 +83,7 @@ namespace ego_planner {
                 // Initial path generated from previous trajectory.
                 bool init_fail = false;
                 init_success = initPathFromPreviousTrajectory(ts, init_fail, local_target_pt, local_target_vel, start_end_derivatives, point_set);
-                flag_force_polynomial = true;
+                if(!init_success) flag_force_polynomial = true;
                 if (init_fail) { return false; }
             }
         } while (!init_success);
@@ -196,12 +196,11 @@ namespace ego_planner {
         return true;
     }
 
-    bool EGOPlannerManager::initPathAsPoly(double &ts, const bool flag_randomPolyTraj,
+    void EGOPlannerManager::initPathAsPoly(double &ts, const bool flag_randomPolyTraj,
                                            const Eigen::Vector3d &start_pt, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
                                            const Eigen::Vector3d &local_target_pt, const Eigen::Vector3d &local_target_vel,
                                            vector<Eigen::Vector3d> &start_end_derivatives, vector<Eigen::Vector3d> &point_set) {
         // Initial path generated from a min-snap traj by order.
-
         PolynomialTraj gl_traj;
 
         double dist = (start_pt - local_target_pt).norm();
