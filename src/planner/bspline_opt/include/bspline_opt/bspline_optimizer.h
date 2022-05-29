@@ -92,8 +92,8 @@ namespace ego_planner {
 
         std::vector<std::pair<int, int>> initControlPoints(Eigen::MatrixXd &init_points, bool flag_first_init = true);
 
-        bool BsplineOptimizeTrajRebound(Eigen::MatrixXd &optimal_points,
-                                        double ts); // must be called after initControlPoints()
+        // must be called after initControlPoints()
+        bool BsplineOptimizeTrajRebound(Eigen::MatrixXd &optimal_points,double ts);
         bool BsplineOptimizeTrajRebound(Eigen::MatrixXd &optimal_points, double &final_cost,
                                         const ControlPoints &control_points, double ts);
 
@@ -155,9 +155,8 @@ namespace ego_planner {
 
         bool check_collision_and_rebound();
 
-        static int
-        earlyExit(void *func_data, const double *x, const double *g, double fx, double xnorm, double gnorm, double step,
-                  int n, int k, int ls);
+        static int earlyExit(void *func_data, const double *x, const double *g, double fx, double xnorm, double gnorm,
+                             double step, int n, int k, int ls);
 
         static double costFunctionRebound(void *func_data, const double *x, double *grad, int n);
 

@@ -327,7 +327,6 @@ namespace ego_planner {
         return true;
     }
 
-
     bool EGOPlannerManager::EmergencyStop(const Eigen::Vector3d &stop_pos) {
         Eigen::MatrixXd control_points(3, 6);
         for (int i = 0; i < 6; i++) {
@@ -425,11 +424,8 @@ namespace ego_planner {
     EGOPlannerManager::refineTrajAlgo(UniformBspline &traj, vector<Eigen::Vector3d> &start_end_derivative, double ratio,
                                       double &ts, Eigen::MatrixXd &optimal_control_points) {
         double t_inc;
-
-        Eigen::MatrixXd ctrl_pts; // = traj.getControlPoint()
-
+        Eigen::MatrixXd ctrl_pts;
         reparamBspline(traj, start_end_derivative, ratio, ctrl_pts, ts, t_inc);
-
         traj = UniformBspline(ctrl_pts, 3, ts);
 
         double t_step = traj.getTimeSum() / (ctrl_pts.cols() - 3);
@@ -438,7 +434,6 @@ namespace ego_planner {
             bspline_optimizer_->ref_pts_.emplace_back(traj.evaluateDeBoorT(t));
 
         bool success = bspline_optimizer_->BsplineOptimizeTrajRefine(ctrl_pts, ts, optimal_control_points);
-
         return success;
     }
 
