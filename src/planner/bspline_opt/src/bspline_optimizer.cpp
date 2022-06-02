@@ -910,8 +910,7 @@ namespace ego_planner {
                 UniformBspline traj = UniformBspline(cps_.points, 3, bspline_interval_);
                 double tm, tmp;
                 traj.getTimeSpan(tm, tmp);
-                double t_step = (tmp - tm) / ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
-                                              grid_map_->getResolution());
+                double t_step = (tmp - tm) / ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() / grid_map_->getResolution());
                 for (double t = tm; t < tmp * 2 / 3; t += t_step) {
                     // Only check the closest 2/3 partition of the whole trajectory.
                     flag_occ = grid_map_->getInflateOccupancy(traj.evaluateDeBoorT(t));
@@ -989,11 +988,6 @@ namespace ego_planner {
             double t_step = (tmp - tm) / (length / grid_map_->getResolution());
             for (double t = tm; t < tmp * 2 / 3; t += t_step) {
                 if (grid_map_->getInflateOccupancy(traj.evaluateDeBoorT(t))) {
-//                    Eigen::MatrixXd ref_pts(ref_pts_.size(), 3);
-//                    for (Eigen::Index i = 0; i < ref_pts_.size(); i++) {
-//                        ref_pts.row(i) = ref_pts_[i].transpose();
-//                    }
-
                     flag_safe = false;
                     break;
                 }
@@ -1019,7 +1013,6 @@ namespace ego_planner {
         Eigen::MatrixXd g_smoothness = Eigen::MatrixXd::Zero(3, cps_.size);
         Eigen::MatrixXd g_distance = Eigen::MatrixXd::Zero(3, cps_.size);
         Eigen::MatrixXd g_feasibility = Eigen::MatrixXd::Zero(3, cps_.size);
-        // Eigen::MatrixXd g_mov_objs = Eigen::MatrixXd::Zero(3, cps_.size);
         Eigen::MatrixXd g_swarm = Eigen::MatrixXd::Zero(3, cps_.size);
         Eigen::MatrixXd g_terminal = Eigen::MatrixXd::Zero(3, cps_.size);
 
@@ -1032,7 +1025,6 @@ namespace ego_planner {
         f_combine = lambda1_ * f_smoothness + new_lambda2_ * f_distance + lambda3_ * f_feasibility +
                     new_lambda2_ * f_swarm + lambda2_ * f_terminal;
         f_combine = lambda1_ * f_smoothness + new_lambda2_ * f_distance + lambda3_ * f_feasibility;
-        // printf("origin %f %f %f %f\n", f_smoothness, f_distance, f_feasibility, f_combine);
 
         Eigen::MatrixXd grad_3D = lambda1_ * g_smoothness + new_lambda2_ * g_distance + lambda3_ * g_feasibility +
                                   new_lambda2_ * g_swarm + lambda2_ * g_terminal;
