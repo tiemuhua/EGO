@@ -429,11 +429,10 @@ namespace ego_planner {
         traj = UniformBspline(ctrl_pts, 3, ts);
 
         double t_step = traj.getTimeSum() / (ctrl_pts.cols() - 3);
-        bspline_optimizer_->ref_pts_.clear();
+        vector<Eigen::Vector3d> ref_pts;
         for (double t = 0; t < traj.getTimeSum() + 1e-4; t += t_step)
-            bspline_optimizer_->ref_pts_.emplace_back(traj.evaluateDeBoorT(t));
-
-        bool success = bspline_optimizer_->BsplineOptimizeTrajRefine(ctrl_pts, ts, optimal_control_points);
+            ref_pts.emplace_back(traj.evaluateDeBoorT(t));
+        bool success = bspline_optimizer_->BsplineOptimizeTrajRefine(move(ref_pts), ctrl_pts, ts, optimal_control_points);
         return success;
     }
 

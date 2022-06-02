@@ -491,9 +491,7 @@ namespace ego_planner {
     }
 
     void BsplineOptimizer::calcFitnessCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient) const {
-
         cost = 0.0;
-
         Eigen::Index end_idx = q.cols() - order_;
 
         // def: f = |x*v|^2/a^2 + |x×v|^2/b^2
@@ -502,15 +500,15 @@ namespace ego_planner {
             Eigen::Vector3d x = (q.col(i - 1) + 4 * q.col(i) + q.col(i + 1)) / 6.0 - ref_pts_[i - 1];
             Eigen::Vector3d v = (ref_pts_[i] - ref_pts_[i - 2]).normalized();
 
-            double xdotv = x.dot(v);
-            Eigen::Vector3d xcrossv = x.cross(v);
+            double x_dot_v = x.dot(v);
+            Eigen::Vector3d x_cross_v = x.cross(v);
 
-            double f = pow((xdotv), 2) / a2 + pow(xcrossv.norm(), 2) / b2;
+            double f = pow((x_dot_v), 2) / a2 + pow(x_cross_v.norm(), 2) / b2;
             cost += f;
 
             Eigen::Matrix3d m;
             m << 0, -v(2), v(1), v(2), 0, -v(0), -v(1), v(0), 0;
-            Eigen::Vector3d df_dx = 2 * xdotv / a2 * v + 2 / b2 * m * xcrossv;
+            Eigen::Vector3d df_dx = 2 * x_dot_v / a2 * v + 2 / b2 * m * x_cross_v;
 
             gradient.col(i - 1) += df_dx / 6;
             gradient.col(i) += 4 * df_dx / 6;
@@ -837,15 +835,19 @@ namespace ego_planner {
         return flag_success;
     }
 
-    bool BsplineOptimizer::BsplineOptimizeTrajRefine(const Eigen::MatrixXd &init_points, const double ts,
-                                                     Eigen::MatrixXd &optimal_points) {
-
-        setControlPoints(init_points);
+    /**
+     * @param ref_pts 优化前轨迹采样点，反应优化前轨迹的形状，尽可能使得优化后的轨迹和优化前轨迹类似
+     * @param init_cps 初始控制点
+     * */
+    bool BsplineOptimizer::BsplineOptimizeTrajRefine(vector<Eigen::Vector3d> &&ref_pts, const Eigen::MatrixXd &init_cps, const double ts,
+                                                     Eigen::MatrixXd &optimal_cps) {
+        ref_pts_ = ref_pts;
+        setControlPoints(init_cps);
         setBsplineInterval(ts);
 
         bool flag_success = refine_optimize();
 
-        optimal_points = cps_.points;
+        optimal_cps = cps_.points;
 
         return flag_success;
     }
@@ -941,7 +943,7 @@ namespace ego_planner {
             } else {
                 ROS_WARN("Solver error. Return = %d, %s. Skip this planning.", result, lbfgs::lbfgs_strerror(result));
             }
-        } while ((flag_occ || ellip_flag && restart_nums < MAX_RESART_NUMS_SET) ||
+        } while (((flag_occ || ellip_flag) && restart_nums < MAX_RESART_NUMS_SET) ||
                  (flag_force_return && force_stop_type_ == STOP_FOR_REBOUND && rebound_times <= 20));
 
         return success;
@@ -950,7 +952,7 @@ namespace ego_planner {
     bool BsplineOptimizer::refine_optimize() {
         iter_num_ = 0;
         int start_id = order_;
-        int end_id = cps_.points.cols() - order_;
+        Eigen::Index end_id = cps_.points.cols() - order_;
         variable_num_ = 3 * (end_id - start_id);
 
         double q[variable_num_];
@@ -987,10 +989,10 @@ namespace ego_planner {
             double t_step = (tmp - tm) / (length / grid_map_->getResolution());
             for (double t = tm; t < tmp * 2 / 3; t += t_step) {
                 if (grid_map_->getInflateOccupancy(traj.evaluateDeBoorT(t))) {
-                    Eigen::MatrixXd ref_pts(ref_pts_.size(), 3);
-                    for (Eigen::Index i = 0; i < ref_pts_.size(); i++) {
-                        ref_pts.row(i) = ref_pts_[i].transpose();
-                    }
+//                    Eigen::MatrixXd ref_pts(ref_pts_.size(), 3);
+//                    for (Eigen::Index i = 0; i < ref_pts_.size(); i++) {
+//                        ref_pts.row(i) = ref_pts_[i].transpose();
+//                    }
 
                     flag_safe = false;
                     break;
@@ -1004,8 +1006,6 @@ namespace ego_planner {
         } while (!flag_safe && iter_count <= 0);
 
         lambda4_ = origin_lambda4;
-
-        //cout << "iter_num_=" << iter_num_ << endl;
 
         return flag_safe;
     }

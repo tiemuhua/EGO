@@ -76,7 +76,7 @@ namespace ego_planner {
         // required inputs
         void setControlPoints(const Eigen::MatrixXd &points);
 
-        void setBsplineInterval(const double &ts);
+        inline void setBsplineInterval(const double &ts);
 
         void setSwarmTrajs(SwarmTrajData *swarm_trajs_ptr);
 
@@ -86,18 +86,19 @@ namespace ego_planner {
         void setLocalTargetPt(const Eigen::Vector3d &local_target_pt) { local_target_pt_ = local_target_pt; };
 
         AStar::Ptr a_star_;
-        std::vector<Eigen::Vector3d> ref_pts_;
 
         std::vector<ControlPoints> distinctiveTrajs(vector<std::pair<int, int>> segments);
 
         std::vector<std::pair<int, int>> initControlPoints(Eigen::MatrixXd &init_points, bool flag_first_init = true);
 
         // must be called after initControlPoints()
-        bool BsplineOptimizeTrajRebound(Eigen::MatrixXd &optimal_points,double ts);
+        bool BsplineOptimizeTrajRebound(Eigen::MatrixXd &optimal_points, double ts);
+
         bool BsplineOptimizeTrajRebound(Eigen::MatrixXd &optimal_points, double &final_cost,
                                         const ControlPoints &control_points, double ts);
 
-        bool BsplineOptimizeTrajRefine(const Eigen::MatrixXd &init_points, double ts, Eigen::MatrixXd &optimal_points);
+        bool BsplineOptimizeTrajRefine(vector<Eigen::Vector3d> &&ref_pts, const Eigen::MatrixXd &init_cps,
+                                       double ts, Eigen::MatrixXd &optimal_cps);
 
         inline double getSwarmClearance() const { return swarm_clearance_; }
 
@@ -135,6 +136,7 @@ namespace ego_planner {
         double min_ellip_dist_{};
 
         ControlPoints cps_;
+        std::vector<Eigen::Vector3d> ref_pts_;
 
         /* cost function */
         /* calculate each part of cost function with control points q as input */
